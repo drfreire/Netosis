@@ -1,0 +1,34 @@
+```{r print-platemap-conditions-labelled}
+# After creating a condition platemap .csv with a Well and Condition column, use this to produce an image guide for use during the NETosis experiment
+library(ggplate)
+
+file_path <- file.choose()
+plate_map <- read.csv(file_path)
+
+# Force the newlines (these help fit condition names within round well outlines) in the .csv to function correctly in the plot
+plate_map$Condition <- gsub("\\\\n", "\n", plate_map$Condition)
+
+p <- plate_plot(
+  data = Condition,
+  position = Well,
+  value = Condition,
+  plate_size = 96,
+  plate_type = "round",
+    title = "Dataset Example", 
+  label = Condition,
+  show_legend = FALSE,
+
+# settings
+  title_size = 11,
+  # label size and scale adjustments will help conditions to fit in the wells
+  label_size = 1.1 ,
+  scale = 1.4,
+  
+  # ggplate requires at least as many colours as values
+  colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D", "#B33C47", "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266")
+)
+
+    ggsave("Dataset_Example.png", plot = p, width = 6, height = 4)
+    
+    plot(p)
+```
