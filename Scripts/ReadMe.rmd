@@ -1,0 +1,4 @@
+- Scripts for use with AppleScripts
+- Macros for use with Fiji/ImageJ
+- R scripts to process and produce plots from Celigo data
+- Cell Profiler classifiers
