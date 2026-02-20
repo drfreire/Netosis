@@ -1,5 +1,5 @@
 
-# Netosis
+# NETosis
 
 #### NETosis related codes and experiments.
 
