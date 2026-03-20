@@ -1,0 +1,1030 @@
+---
+title: "Celigo Boxplot Script"
+output: html_notebook
+---
+```{r LIBRARIES}
+library(svglite)
+library(ggplate)
+library(ggplot2)
+library(tidyr)
+library(ggpubr)
+library(ggsignif)
+library(lme4)
+library(lmerTest)
+library(stringr)
+library(emmeans)
+library(multcomp)
+library(rstudioapi)
+library(dplyr)
+library(ggpattern)
+library(ARTool)
+library(robustlmm)
+library(data.table)
+library(RColorBrewer)
+```
+
+```{r DATA IMPORT}
+# Specify how many runs will be included for analysis
+runs_included = 4
+
+# Read multiple files and name them for graph legends etc.
+read_multiple_files <- function(n_files = runs_included) {
+  data_list <- list()
+
+  for(i in 1:n_files) {
+    
+    # Log
+    cat("Selecting file", i, "of", n_files, "\n")
+
+    # Name the Source of the data (which run)
+    user_input <- showPrompt(title = "Organizing Data:", message = "Enter dataset name. Next select the corresponding tabular .csv and condition .csv")
+    
+    # Select data
+    file_path <- file.choose()
+    data <- read.csv(file_path, skip = 15, header = TRUE, check.names = TRUE) %>%
+      dplyr::select(1:39) %>%
+      filter((Row %in% LETTERS[1:8]) & (Column %in% 1:12))
+    
+    # Select, read, and add Condition to data as a new column
+    condition_path <- file.choose()
+    Condition <- read.csv(condition_path, check.names = FALSE)
+    data <- data %>%
+    left_join(Condition %>% select(Well, Condition), by = "Well")
+    
+    # Add a column preserving the Source of the data
+    data$Source <- user_input
+    data_list[[i]] <- data
+    
+    # Log
+    cat("Combining", file_path, "and", condition_path, "\n")
+    cat("Added dataset:", user_input, "\n\n")
+  }
+
+  # Combine all datasets
+  combined_data <- do.call(rbind, data_list)
+  return(combined_data)
+}
+# Create a datasheet out of combined runs
+NET_Data_Combined <- read_multiple_files(runs_included)
+
+# Fix formatting issues
+NET_Data_Combined<-mutate(NET_Data_Combined, across(starts_with("X.."), ~as.numeric(gsub("%", "", .x)) / 100))
+NET_Data_Combined$Condition <- gsub("\\\\n", "\n", NET_Data_Combined$Condition)
+names(NET_Data_Combined) <- gsub("^X\\.\\.", "%", names(NET_Data_Combined))
+
+# Create index columns
+NET_Data_Combined$MPO.Index <- as.numeric(NET_Data_Combined$'%MPO') * as.numeric(NET_Data_Combined$'AVG.MPO.Mean.Intensity')
+NET_Data_Combined$CitH3.Index <- as.numeric(NET_Data_Combined$'%CitH3') * as.numeric(NET_Data_Combined$'AVG.CitH3.Mean.Intensity')
+NET_Data_Combined$DAPI.Index <- as.numeric(NET_Data_Combined$'%DAPI') * as.numeric(NET_Data_Combined$'AVG.DAPI.Mean.Intensity')
+
+# Make sure it's a data table
+setDT(NET_Data_Combined)
+```
+
+```{r 1-HELPER FUNCTIONS}
+# === CHUNK 1: HELPER FUNCTIONS ===
+# Run this chunk once at the start of your session
+# Only re-run if you change a function
+
+# === HELPER FUNCTIONS ===
+
+get_color <- function(col_name, colored_boxes) {
+  if (colored_boxes) {
+    dplyr::case_when(
+      grepl("MPO", col_name) ~ "green",
+      grepl("CitH3", col_name) ~ "red",
+      grepl("DAPI", col_name) ~ "blue",
+      grepl("Bright.Field", col_name) ~ "grey",
+      TRUE ~ "black"
+    )
+  } else {
+    "white"
+  }
+}
+
+ # === Bracket Placement ===
+get_bracket_settings <- function(max_value, condition_pairs, group_by_source, 
+                                unique_sources = NULL, unique_measures = NULL,
+                                bracket_coefficient, bracket_settings) {
+  
+  if (group_by_source) {
+    n_brackets <- length(condition_pairs) * length(unique_sources) * length(unique_measures)
+  } else {
+    n_brackets <- length(condition_pairs)
+  }
+  
+  spacing_multiplier <- bracket_coefficient / sqrt(n_brackets / 3)
+  
+  list(
+    y_position_start = max_value * bracket_settings$y_start_mult,
+    y_step_grouped = max_value * (spacing_multiplier / bracket_settings$step_div), 
+    y_step_ungrouped = max_value * (spacing_multiplier / bracket_settings$step_div),
+    bracket_height = max_value * (spacing_multiplier / bracket_settings$height_div),
+    text_offset_grouped = max_value * (spacing_multiplier / bracket_settings$text_offset_div), 
+    text_offset_ungrouped_multi = max_value * (spacing_multiplier / bracket_settings$text_offset_div),
+    text_offset_ungrouped_single = max_value * (spacing_multiplier / bracket_settings$text_offset_div),
+    linewidth = bracket_settings$linewidth,
+    text_size_grouped = bracket_settings$text_sizes[1],
+    text_size_ungrouped_multi = bracket_settings$text_sizes[2],
+    text_size_ungrouped_single = bracket_settings$text_sizes[3]
+  )
+}
+
+get_pval <- function(pairwise_df, pair) {
+  p_val_row <- pairwise_df %>%
+    filter((cond1 == pair[1] & cond2 == pair[2]) | 
+           (cond1 == pair[2] & cond2 == pair[1]))
+  if (nrow(p_val_row) > 0) p_val_row$p_adjusted[1] else NA
+}
+
+apply_pvalue_correction <- function(results, correction_needed, pairwise_correction) {
+  if (nrow(results) > 1 && correction_needed) { 
+    results$p_adjusted <- p.adjust(results$p_value, method = pairwise_correction)
+  } else {
+    results$p_adjusted <- results$p_value
+  }
+  results
+}
+
+extract_contrast_results <- function(pairs_df, condition_pairs, include_estimates = FALSE) {
+  results <- data.frame()
+  for (pair in condition_pairs) {
+    for (i in 1:nrow(pairs_df)) {
+      contrast_str <- as.character(pairs_df$contrast[i])
+      parts <- strsplit(contrast_str, " - ", fixed = TRUE)[[1]]
+      
+      if (length(parts) == 2) {
+        c1 <- gsub("^\\(|\\)$", "", trimws(parts[1]))
+        c2 <- gsub("^\\(|\\)$", "", trimws(parts[2]))
+        
+        if ((c1 == pair[1] && c2 == pair[2]) || (c1 == pair[2] && c2 == pair[1])) {
+          row_data <- data.frame(cond1 = pair[1], cond2 = pair[2], p_value = pairs_df$p.value[i])
+          if (include_estimates) {
+            row_data$estimate <- pairs_df$estimate[i]
+            row_data$SE <- pairs_df$SE[i]
+            row_data$df <- pairs_df$df[i]
+            row_data$t_ratio <- pairs_df$t.ratio[i]
+          }
+          results <- rbind(results, row_data)
+          break
+        }
+      }
+    }
+  }
+  results
+}
+
+draw_bracket <- function(p, x1, x2, y_pos, p_val, bs, text_size_key) {
+  text_offset <- switch(text_size_key,
+                       "grouped" = bs$text_offset_grouped,
+                       "ungrouped_multi" = bs$text_offset_ungrouped_multi,
+                       "ungrouped_single" = bs$text_offset_ungrouped_single)
+  
+  text_size <- switch(text_size_key,
+                     "grouped" = bs$text_size_grouped,
+                     "ungrouped_multi" = bs$text_size_ungrouped_multi,
+                     "ungrouped_single" = bs$text_size_ungrouped_single)
+  
+  p +
+    annotate("segment", x = x1, xend = x2, y = y_pos, yend = y_pos, linewidth = bs$linewidth) +
+    annotate("segment", x = x1, xend = x1, y = y_pos, yend = y_pos - bs$bracket_height, linewidth = bs$linewidth) +
+    annotate("segment", x = x2, xend = x2, y = y_pos, yend = y_pos - bs$bracket_height, linewidth = bs$linewidth) +
+    annotate("text", x = (x1 + x2) / 2, y = y_pos + text_offset,
+             label = paste("p =", round(p_val, 3)), size = text_size)
+}
+```
+
+```{r 2-DATA PREPARATION FUNCTIONS}
+# === CHUNK 2: DATA PREPARATION FUNCTIONS ===
+
+prepare_plot_data <- function(raw_data, runs, conditions, measures, normalize_flag) {
+  plot_data <- raw_data %>%
+    filter(Condition %in% conditions,
+           Source %in% runs) %>%
+    mutate(
+      Condition = factor(Condition, levels = conditions),
+      Source = factor(Source)
+    ) %>%
+    pivot_longer(cols = all_of(measures), 
+                 names_to = "Measure", 
+                 values_to = "value")
+  
+  if (normalize_flag) {
+    plot_data <- plot_data %>%
+      group_by(Source) %>%
+      mutate(value = (value - mean(value)) / sd(value)) %>%
+      ungroup()
+  }
+  
+  return(plot_data)
+}
+
+setup_comparison_pairs <- function(conditions, use_custom, custom_list) {
+  if (use_custom) {
+    condition_pairs <- custom_list
+    cat("\n=== Using CUSTOM comparison pairs ===\n")
+  } else {
+    condition_pairs <- combn(conditions, 2, simplify = FALSE)
+    cat("\n=== Using ALL possible comparison pairs ===\n")
+  }
+  
+  cat("Number of conditions:", length(conditions), "\n")
+  cat("Number of pairwise comparisons:", length(condition_pairs), "\n")
+  cat("Comparisons to be made:\n")
+  for (i in seq_along(condition_pairs)) {
+    cat("  ", i, ": ", gsub("\n", " ", condition_pairs[[i]][1]), " vs ", 
+        gsub("\n", " ", condition_pairs[[i]][2]), "\n", sep="")
+  }
+  
+  return(condition_pairs)
+}
+```
+
+```{r 3-STATISTICAL TEST FUNCTIONS}
+# === CHUNK 3: STATISTICAL TEST FUNCTIONS ===
+
+calculate_wilcoxon_pvalues <- function(plot_data, condition_pairs, group_by_source, pairwise_correction, correction_needed) {
+  if (group_by_source) {
+    run_comparisons <- plot_data %>%
+      group_by(Source, Measure) %>%
+      group_modify(~ {
+        unique_conditions <- unique(.x$Condition)
+        if (length(unique_conditions) >= 2) {
+          results <- data.frame()
+          
+          for (pair in condition_pairs) {
+            pair_data <- .x %>% filter(Condition %in% pair)
+            if (nrow(pair_data) > 0) {
+              test_result <- wilcox.test(value ~ Condition, data = pair_data)
+              results <- rbind(results, 
+                              data.frame(cond1 = as.character(pair[1]),
+                                       cond2 = as.character(pair[2]),
+                                       p_value = test_result$p.value))
+            }
+          }
+          
+          results <- apply_pvalue_correction(results, correction_needed, pairwise_correction)
+          results
+        } else {
+          data.frame(cond1 = character(), cond2 = character(), p_value = numeric(), p_adjusted = numeric())
+        }
+      }) %>%
+      ungroup()
+    
+    cat("\n=== P-values for each Source-Measure combination (Wilcoxon) ===\n")
+    print(run_comparisons)
+    return(list(type = "grouped", data = run_comparisons))
+    
+  } else {
+    overall_pairwise <- data.frame()
+    for (pair in condition_pairs) {
+      pair_data <- plot_data %>% filter(Condition %in% pair)
+      if (nrow(pair_data) > 0) {
+        result <- wilcox.test(value ~ Condition, data = pair_data)
+        overall_pairwise <- rbind(overall_pairwise, 
+                                  data.frame(cond1 = as.character(pair[1]), 
+                                           cond2 = as.character(pair[2]),
+                                           p_value = result$p.value))
+      }
+    }
+    
+    overall_pairwise <- apply_pvalue_correction(overall_pairwise, correction_needed, pairwise_correction)
+    
+    if (correction_needed) {
+      cat("\n=== P-values (with", pairwise_correction, "correction - Wilcoxon) ===\n")
+      print(overall_pairwise[, c("cond1", "cond2", "p_value", "p_adjusted")])
+    } else {
+      cat("\n=== P-values (no correction applied - Wilcoxon) ===\n")
+      print(overall_pairwise[, c("cond1", "cond2", "p_value")])
+    }
+    
+    return(list(type = "ungrouped", data = overall_pairwise))
+  }
+}
+
+calculate_art_lmm_pvalues <- function(plot_data, condition_pairs, group_by_source, pairwise_correction, correction_needed, run_string, measure_string_file, condition_code) {
+  cat("\n=== Fitting Aligned Rank Transform LMM ===\n")
+  
+  if (group_by_source) {
+    run_comparisons <- plot_data %>%
+      group_by(Source, Measure) %>%
+      group_modify(~ {
+        tryCatch({
+          if (length(unique(.x$Condition)) < 2) {
+            return(data.frame(cond1 = character(), cond2 = character(), p_value = numeric(), p_adjusted = numeric()))
+          }
+          
+          art_model <- art(value ~ Condition, data = .x)
+          art_emm <- emmeans(artlm(art_model, "Condition"), ~ Condition)
+          pairs_result <- pairs(art_emm, adjust = "none")
+          pairs_df <- as.data.frame(pairs_result)
+          
+          results <- extract_contrast_results(pairs_df, condition_pairs, include_estimates = FALSE)
+          results <- apply_pvalue_correction(results, correction_needed, pairwise_correction)
+          results
+        }, error = function(e) {
+          cat("Error fitting ART model:", e$message, "\n")
+          return(data.frame(cond1 = character(), cond2 = character(), p_value = numeric(), p_adjusted = numeric()))
+        })
+      }) %>%
+      ungroup()
+    
+    cat("\n=== P-values for each Source-Measure combination (ART-LMM) ===\n")
+    print(run_comparisons)
+    return(list(type = "grouped", data = run_comparisons))
+    
+  } else {
+    tryCatch({
+      art_model <- art(value ~ Condition + (1|Source), data = plot_data)
+      
+      art_diagnostics <- list(
+        n_obs = nrow(plot_data),
+        n_sources = length(unique(plot_data$Source)),
+        obs_per_source = table(plot_data$Source),
+        alignment_summary = capture.output(print(summary(art_model))),
+        anova_table = capture.output(print(anova(art_model)))
+      )
+      
+      art_emm <- emmeans(artlm(art_model, "Condition"), ~ Condition)
+      pairs_result <- pairs(art_emm, adjust = "none")
+      pairs_df <- as.data.frame(pairs_result)
+      
+      art_diagnostics$emmeans <- summary(art_emm)
+      art_diagnostics$all_contrasts <- pairs_df
+      
+      overall_pairwise <- extract_contrast_results(pairs_df, condition_pairs, include_estimates = TRUE)
+      overall_pairwise <- apply_pvalue_correction(overall_pairwise, correction_needed, pairwise_correction)
+      
+      # Save diagnostic report to file
+      report_filename <- paste0("Run", run_string, "_", measure_string_file, "_", 
+                               condition_code, "_art-lmm-report.txt")
+      sink(report_filename)
+      cat("========================================\n")
+      cat("=== ART-LMM COMPLETE DIAGNOSTIC REPORT ===\n")
+      cat("========================================\n\n")
+      cat("--- Model Information ---\n")
+      cat("Number of observations:", art_diagnostics$n_obs, "\n")
+      cat("Number of Sources (Runs):", art_diagnostics$n_sources, "\n")
+      cat("Observations per Source:\n")
+      print(art_diagnostics$obs_per_source)
+      cat("\n--- Alignment Check ---\n")
+      writeLines(art_diagnostics$alignment_summary)
+      cat("\n--- ANOVA Table ---\n")
+      writeLines(art_diagnostics$anova_table)
+      cat("\n--- Estimated Marginal Means ---\n")
+      print(art_diagnostics$emmeans)
+      cat("\n--- All Pairwise Contrasts ---\n")
+      print(art_diagnostics$all_contrasts[, c("contrast", "estimate", "SE", "df", "t.ratio", "p.value")])
+      cat("\n--- Selected Comparisons ---\n")
+      if (correction_needed) {
+        cat("With", pairwise_correction, "correction applied\n\n")
+      }
+      print(overall_pairwise)
+      cat("\n========================================\n")
+      sink()
+      cat("Diagnostic report saved to:", report_filename, "\n")
+      
+      return(list(type = "ungrouped", data = overall_pairwise))
+    }, error = function(e) {
+      cat("Error fitting ART-LMM model:", e$message, "\n")
+      return(list(type = "ungrouped", data = data.frame(cond1 = character(), cond2 = character(), 
+                                                         p_value = numeric(), p_adjusted = numeric())))
+    })
+  }
+}
+
+calculate_rank_lmm_pvalues <- function(plot_data, condition_pairs, group_by_source, pairwise_correction, correction_needed) {
+  cat("\n=== Fitting Rank-based LMM ===\n")
+  
+  if (group_by_source) {
+    run_comparisons <- plot_data %>%
+      group_by(Source, Measure) %>%
+      group_modify(~ {
+        tryCatch({
+          if (length(unique(.x$Condition)) < 2) {
+            return(data.frame(cond1 = character(), cond2 = character(), p_value = numeric(), p_adjusted = numeric()))
+          }
+          
+          .x <- .x %>% mutate(value_rank = rank(value))
+          lm_model <- lm(value_rank ~ Condition, data = .x)
+          emm <- emmeans(lm_model, ~ Condition)
+          pairs_result <- pairs(emm, adjust = "none")
+          pairs_df <- as.data.frame(pairs_result)
+          
+          results <- extract_contrast_results(pairs_df, condition_pairs, include_estimates = FALSE)
+          results <- apply_pvalue_correction(results, correction_needed, pairwise_correction)
+          results
+        }, error = function(e) {
+          cat("Error fitting rank-LMM:", e$message, "\n")
+          return(data.frame(cond1 = character(), cond2 = character(), p_value = numeric(), p_adjusted = numeric()))
+        })
+      }) %>%
+      ungroup()
+    
+    cat("\n=== P-values for each Source-Measure combination (Rank-LMM) ===\n")
+    print(run_comparisons)
+    return(list(type = "grouped", data = run_comparisons))
+    
+  } else {
+    tryCatch({
+      plot_data_ranked <- plot_data %>% mutate(value_rank = rank(value))
+      lmm_model <- lmer(value_rank ~ Condition + (1|Source), data = plot_data_ranked)
+      
+      cat("\nRank-based LMM Summary:\n")
+      print(summary(lmm_model))
+      
+      emm <- emmeans(lmm_model, ~ Condition)
+      pairs_result <- pairs(emm, adjust = "none")
+      pairs_df <- as.data.frame(pairs_result)
+      
+      overall_pairwise <- extract_contrast_results(pairs_df, condition_pairs, include_estimates = FALSE)
+      overall_pairwise <- apply_pvalue_correction(overall_pairwise, correction_needed, pairwise_correction)
+      
+      if (correction_needed) {
+        cat("\n=== P-values (with", pairwise_correction, "correction - Rank-LMM) ===\n")
+        print(overall_pairwise[, c("cond1", "cond2", "p_value", "p_adjusted")])
+      } else {
+        cat("\n=== P-values (no correction applied - Rank-LMM) ===\n")
+        print(overall_pairwise[, c("cond1", "cond2", "p_value")])
+      }
+      
+      return(list(type = "ungrouped", data = overall_pairwise))
+    }, error = function(e) {
+      cat("Error fitting Rank-LMM model:", e$message, "\n")
+      return(list(type = "ungrouped", data = data.frame(cond1 = character(), cond2 = character(), 
+                                                         p_value = numeric(), p_adjusted = numeric())))
+    })
+  }
+}
+```
+
+```{r 4-METADATA & AESTHETICS FUNCTIONS}
+# === CHUNK 4: METADATA & AESTHETICS FUNCTIONS ===
+
+generate_metadata <- function(plot_data, group_by_source, normalize, test_method, 
+                             pairwise_correction, correction_needed, measure_to_plot,
+                             conditions_to_plot, use_custom_title, custom_title) {
+  
+  norm_state <- if (normalize) "Z.score" else ""
+  run_numbers <- sort(as.numeric(gsub("Run ", "", unique(plot_data$Source))))
+  run_string <- paste(run_numbers, collapse = "&")
+  if (group_by_source) {
+    run_string <- paste0(run_string, "_split")
+  }
+  
+  condition_code <- gsub("[\n\\+]", " ", conditions_to_plot) %>%
+    strsplit(" ") %>%
+    lapply(\(words) paste0(substr(words[words != ""], 1, 1), collapse = "")) %>%
+    unlist() %>%
+    paste(collapse = "-")
+  
+  measure_string <- gsub("%", "percent", measure_to_plot)
+  measure_string_collapsed <- paste(measure_string, collapse = " & ")
+  
+  test_name_map <- c("wilcoxon" = "Wilcoxon", "art_lmm" = "ART-LMM", "rank_lmm" = "Rank-LMM", "none" = "No Significance")
+  title_test_name <- if (correction_needed) {
+    paste0("(", test_name_map[test_method], " (", pairwise_correction, "))")
+  } else {
+    paste0("(", test_name_map[test_method], ")")
+  }
+  
+  if (use_custom_title) {
+    wrapped_title <- custom_title
+  } else {
+    wrapped_title <- stringr::str_wrap(
+      paste("Run", run_string, measure_string_collapsed, norm_state, title_test_name), 
+      width = 20
+    )
+    wrapped_title <- gsub("\\.", " ", wrapped_title)
+  }
+  
+  label_y <- gsub("\\.", " ", measure_string)
+  
+  list(
+    run_string = run_string,
+    condition_code = condition_code,
+    measure_string_file = paste(measure_string, collapse = "_"),
+    wrapped_title = wrapped_title,
+    label_y = label_y
+  )
+}
+
+setup_plot_aesthetics <- function(plot_data, source_colors, colored_boxes) {
+  unique_sources <- sort(unique(plot_data$Source))
+  unique_measures <- unique(plot_data$Measure)
+  
+  shape_values <- c(16, 17, 15, 18, 19, 20)[1:length(unique_sources)]
+  names(shape_values) <- unique_sources
+  source_labels <- gsub("Run ", "", unique_sources)
+  names(source_labels) <- unique_sources
+  
+  # Get colors for sources that are in the predefined list
+  active_source_colors <- source_colors[names(source_colors) %in% unique_sources]
+  
+  # For sources NOT in the list, generate colors automatically
+  missing_sources <- setdiff(unique_sources, names(source_colors))
+if (length(missing_sources) > 0) {
+  cat("\nNote: Generating colors for unmapped sources:", paste(missing_sources, collapse = ", "), "\n")
+
+  # Use a nice qualitative palette
+  new_colors <- brewer.pal(max(3, length(missing_sources)), "Set1")[1:length(missing_sources)]
+  names(new_colors) <- missing_sources
+  active_source_colors <- c(active_source_colors, new_colors)
+}
+  
+  #measure_colors <- get_color(unique_measures, colored_boxes)
+  measure_colors <- sapply(unique_measures, get_color, colored_boxes = colored_boxes)
+  names(measure_colors) <- unique_measures
+  
+  use_patterns <- length(unique_measures) > 1 && any(duplicated(measure_colors))
+  
+  pattern_values <- NULL
+  if (use_patterns) {
+    pattern_values <- c("none", "stripe", "crosshatch", "circle", "wave")[1:length(unique_measures)]
+    names(pattern_values) <- unique_measures
+  }
+  
+  list(
+    unique_sources = unique_sources,
+    unique_measures = unique_measures,
+    shape_values = shape_values,
+    source_labels = source_labels,
+    active_source_colors = active_source_colors,
+    measure_colors = measure_colors,
+    use_patterns = use_patterns,
+    pattern_values = pattern_values
+  )
+}
+```
+
+```{r 5-PLOT CREATION FUNCTIONS}
+# === CHUNK 5: PLOT CREATION FUNCTIONS ===
+
+create_base_plot_grouped <- function(plot_data, aesthetics, dodge_width, box_width, 
+                                    box_alpha, box_outlier_shape, point_size, point_alpha,
+                                    jitter_width, pattern_settings) {
+  
+  p <- ggplot(plot_data, aes(x = Condition, y = value))
+  
+  if (aesthetics$use_patterns) {
+    p <- p + 
+      geom_boxplot_pattern(
+        aes(fill = Measure, pattern = Measure, group = interaction(Condition, Source, Measure)),
+        pattern_fill = pattern_settings$fill,
+        pattern_angle = pattern_settings$angle,
+        pattern_density = pattern_settings$density,
+        pattern_spacing = pattern_settings$spacing,
+        pattern_key_scale_factor = pattern_settings$key_scale,
+        position = position_dodge(dodge_width),
+        width = box_width,
+        alpha = box_alpha,
+        outlier.shape = box_outlier_shape
+      ) +
+      scale_pattern_manual(values = aesthetics$pattern_values, name = "Measure") +
+      scale_fill_manual(values = aesthetics$measure_colors, name = "Measure")
+  } else {
+    p <- p + 
+      geom_boxplot(
+        aes(fill = Measure, group = interaction(Condition, Source, Measure)),
+        position = position_dodge(dodge_width),
+        width = box_width,
+        alpha = box_alpha,
+        outlier.shape = box_outlier_shape
+      ) +
+      scale_fill_manual(
+        values = aesthetics$measure_colors,
+        guide = if(length(aesthetics$unique_measures) == 1) "none" else "legend",
+        name = "Measure"
+      )
+  }
+  
+  p <- p +
+    geom_point(
+      aes(shape = Source, group = interaction(Condition, Source, Measure)),
+      position = position_jitterdodge(
+        jitter.width = jitter_width,
+        dodge.width = dodge_width
+      ),
+      size = point_size, 
+      alpha = point_alpha
+    ) +
+    scale_shape_manual(
+      values = aesthetics$shape_values, 
+      labels = aesthetics$source_labels, 
+      name = "Run"
+    )
+  
+  return(p)
+}
+
+create_base_plot_ungrouped <- function(plot_data, aesthetics, dodge_width, box_width,
+                                      box_alpha, box_outlier_shape, point_size, point_alpha,
+                                      jitter_width, pattern_settings) {
+  
+  p <- ggplot(plot_data, aes(x = Condition, y = value, fill = Measure))
+  
+  if (aesthetics$use_patterns) {
+    p <- p + 
+      geom_boxplot_pattern(
+        aes(pattern = Measure),
+        pattern_fill = pattern_settings$fill,
+        pattern_angle = pattern_settings$angle,
+        pattern_density = pattern_settings$density,
+        pattern_spacing = pattern_settings$spacing,
+        pattern_key_scale_factor = pattern_settings$key_scale,
+        position = position_dodge(dodge_width),
+        width = box_width,
+        alpha = box_alpha,
+        outlier.shape = box_outlier_shape
+      ) +
+      scale_pattern_manual(values = aesthetics$pattern_values, name = "Measure")
+  } else {
+    p <- p + 
+      geom_boxplot(
+        position = position_dodge(dodge_width),
+        width = box_width,
+        alpha = box_alpha,
+        outlier.shape = box_outlier_shape
+      ) 
+  }
+  
+  p <- p +
+    geom_point(
+      aes(shape = Source, color = Source, group = interaction(Condition, Measure)),
+      position = position_jitterdodge(
+        jitter.width = jitter_width,
+        dodge.width = dodge_width,
+        jitter.height = 0
+      ),
+      size = point_size, 
+      alpha = point_alpha,
+      show.legend = c(shape = TRUE, fill = FALSE, pattern = FALSE)
+    ) +
+    scale_color_manual(values = aesthetics$active_source_colors, guide = "none") +
+    scale_fill_manual(
+      values = aesthetics$measure_colors,
+      guide = if(length(aesthetics$unique_measures) == 1) "none" else "legend",
+      name = "Measure"
+    ) +
+    scale_shape_manual(
+      values = aesthetics$shape_values, 
+      labels = aesthetics$source_labels, 
+      name = "Run"
+    ) +
+    guides(shape = guide_legend(override.aes = list(color = aesthetics$active_source_colors))
+           )
+  
+  return(p)
+}
+```
+
+```{r 6-BRACKET DRAWING FUNCTIONS}
+# === CHUNK 6: BRACKET DRAWING FUNCTIONS ===
+
+add_brackets_grouped <- function(p, plot_data, run_comparisons, condition_pairs, 
+                                conditions_to_plot, aesthetics, dodge_width) {
+  
+  bs <- get_bracket_settings(max(plot_data$value, na.rm = TRUE), 
+                          condition_pairs, group_by_source,
+                          aesthetics$unique_sources, aesthetics$unique_measures, bracket_coefficient, bracket_settings)
+  
+  n_groups <- length(aesthetics$unique_sources) * length(aesthetics$unique_measures)
+  bracket_index <- 0
+  
+  for (measure in aesthetics$unique_measures) {
+    for (source in aesthetics$unique_sources) {
+      source_measure_comparisons <- run_comparisons %>%
+        filter(Source == source, Measure == measure)
+      
+      for (pair_idx in seq_along(condition_pairs)) {
+        pair <- condition_pairs[[pair_idx]]
+        p_val <- get_pval(source_measure_comparisons, pair)
+        
+        y_pos <- bs$y_position_start + bracket_index * bs$y_step_grouped
+        cond1_x <- which(conditions_to_plot == pair[1])
+        cond2_x <- which(conditions_to_plot == pair[2])
+        
+        group_in_condition <- (which(aesthetics$unique_measures == measure) - 1) * 
+                             length(aesthetics$unique_sources) + 
+                             which(aesthetics$unique_sources == source)
+        x_offset <- -dodge_width/2 + dodge_width/(2*n_groups) + 
+                   (group_in_condition - 1) * dodge_width/n_groups
+        
+        x1 <- cond1_x + x_offset
+        x2 <- cond2_x + x_offset
+        
+        p <- draw_bracket(p, x1, x2, y_pos, p_val, bs, "grouped")
+        bracket_index <- bracket_index + 1
+      }
+    }
+  }
+  
+  return(p)
+}
+
+add_brackets_ungrouped <- function(p, plot_data, overall_pairwise, condition_pairs,
+                                  conditions_to_plot, aesthetics, dodge_width) {
+  
+  bs <- get_bracket_settings(max(plot_data$value, na.rm = TRUE), 
+                          condition_pairs, group_by_source,
+                          aesthetics$unique_sources, aesthetics$unique_measures, bracket_coefficient, bracket_settings)
+  
+  if (length(aesthetics$unique_measures) > 1) {
+    bracket_offset <- dodge_width / length(aesthetics$unique_measures)
+    bracket_index <- 0
+    
+    for (i in seq_along(aesthetics$unique_measures)) {
+      for (pair_idx in seq_along(condition_pairs)) {
+        pair <- condition_pairs[[pair_idx]]
+        p_val <- get_pval(overall_pairwise, pair)
+        
+        x_shift <- -dodge_width/2 + bracket_offset/2 + (i - 1) * bracket_offset
+        y_pos <- bs$y_position_start + bracket_index * bs$y_step_ungrouped
+        
+        cond1_x <- which(conditions_to_plot == pair[1])
+        cond2_x <- which(conditions_to_plot == pair[2])
+        
+        x1 <- cond1_x + x_shift
+        x2 <- cond2_x + x_shift
+        
+        p <- draw_bracket(p, x1, x2, y_pos, p_val, bs, "ungrouped_multi")
+        bracket_index <- bracket_index + 1
+      }
+    }
+  } else {
+    for (pair_idx in seq_along(condition_pairs)) {
+      pair <- condition_pairs[[pair_idx]]
+      p_val <- get_pval(overall_pairwise, pair)
+      
+      y_pos <- bs$y_position_start + (pair_idx - 1) * bs$y_step_ungrouped
+      
+      cond1_x <- which(conditions_to_plot == pair[1])
+      cond2_x <- which(conditions_to_plot == pair[2])
+      
+      p <- draw_bracket(p, cond1_x, cond2_x, y_pos, p_val, bs, "ungrouped_single")
+    }
+  }
+  
+  
+  return(p)
+}
+```
+
+```{r 7-FINALIZATION & OUTPUT FUNCTIONS}
+# === CHUNK 7: FINALIZATION & OUTPUT FUNCTIONS ===
+
+finalize_plot <- function(p, metadata, aesthetics, title_size, axis_x_size, 
+                         axis_y_tick_size, axis_y_title_size, legend_position, legend_size) {
+  
+  y_label <- if(length(aesthetics$unique_measures) > 1) "" else metadata$label_y
+  
+  p <- p +
+    labs(x = "", y = y_label, title = metadata$wrapped_title) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(size = title_size, hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = axis_x_size),
+      axis.text.y = element_text(size = axis_y_tick_size),
+      axis.title.y = element_text(size = axis_y_title_size),
+      legend.position = legend_position,
+      legend.text = element_text(size = legend_size)
+    )
+  
+  return(p)
+}
+
+save_and_display <- function(p, metadata, test_method, pairwise_correction, file_type, save_width, save_height) {
+  
+  print(p)
+  
+  test_name_short <- c("wilcoxon" = "wlcxn", "art_lmm" = "art-lmm", "rank_lmm" = "rnk-lmm")
+  correction_short <- c("bonferroni" = "bonf", "holm" = "holm", "BH" = "BH", "none" = "none")
+  
+  plot_name <- paste0("Run", metadata$run_string, "_", metadata$measure_string_file, "_", 
+                     metadata$condition_code, "_", test_name_short[test_method], "_", correction_short[pairwise_correction],
+                     "-bxplt", file_type)
+  
+  ggsave(plot_name, plot = p, width = save_width, height = save_height)
+  cat("\nPlot saved to:", plot_name, "\n")
+  
+  return(plot_name)
+}
+```
+
+```{r edits}
+#NET_Data_Combined$Condition <- gsub("Polyester\nColors\nHeat\nKilled", "Polyester\nColors\nHeat Killed", NET_Data_Combined$Condition)
+# =======================
+# In plot 2, right after aesthetics <- setup_plot_aesthetics(...)
+#aesthetics$shape_values["Run 7"] <- 15  # Force Run 7 to use shape 17 (triangle)
+#aesthetics$shape_values["Run 8"] <- 18
+#aesthetics$shape_values["Run 9"] <- 19
+# ========================
+```
+
+```{r MAIN SCRIPT}
+# === USER SETTINGS ===
+runs_to_plot <- c(
+                  "Run 6", "Run 7", "Run 10", "Run 14"
+                  )
+conditions_to_plot <- c(
+                        "- PMA",
+                        "+ PMA",
+                        "Polyester\nColors",
+                        "Polyester\nColors\n+ UV",
+                        "Polyester\nColors\n4 Hours",
+                        "Polyester\nColors + UV\n4 Hours",
+                        "Red\nPolyester",
+                        "Red\nPolyester\n+ UV",
+                        "White\nCotton",
+                        "White\nCotton\n+ UV"
+                        )
+                               #Set to c("") to plot all possible conditions
+measure_to_plot <- c("CitH3.Index")
+group_by_source <- FALSE 
+normalize <- FALSE
+test_method <- "wilcoxon"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
+pairwise_correction <- "none"                    # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
+use_custom_pairs <- TRUE         
+colored_boxes <- FALSE
+use_custom_title <- FALSE
+
+# Save settings
+file_type <- ".png"
+save_width <-13
+save_height <- 8
+
+# Bracket settings 
+bracket_coefficient <- 1                  # Key Bracket Spacing Variable
+bracket_settings <- list(
+  y_start_mult = 1.15,
+  step_div = 10,
+  height_div = 32,
+  text_offset_div = 23,
+  linewidth = 0.5,
+  text_sizes = c(3, 3, 4)
+)
+
+# Custom comparison pairs (used if use_custom_pairs = TRUE)
+custom_pairs_list <- list(
+  c("- PMA", "+ PMA"),
+  c("- PMA", "Polyester\nColors"),
+  c("- PMA", "Polyester\nColors + UV"),
+  c("- PMA", "Polyester\nColors\n4 Hours"),
+  c("- PMA", "Polyester\nColors + UV\n4 Hours"),
+  c("- PMA", "Red\nPolyester"),
+  c("- PMA", "Red\nPolyester\n+ UV"),
+  c("- PMA", "White\nCotton"),
+  c("- PMA", "White\nCotton\n+ UV")
+  #c("- PMA", "Leachate\n12.5µL"),
+  #c("- PMA", "Leachate\n50µL"),
+  #c("- PMA", "Polyester\nColors"),
+  #c("- PMA", "Polyester\nColors\n4 Hours"),
+  #c("- PMA", "Polyester\nColors\n8 Hours"),
+  #c("- PMA", "Polyester\nColors\n16 Hours"),
+  #c("- PMA", "Polyester\nColors + UV\n4 Hours"),
+  #c("- PMA", "Polyester\nColors + UV\n8 Hours"),
+  #c("- PMA", "Polyester\nColors + UV\n16 Hours"),
+  #c("- PMA", "MP\nStandards\n16 Hours")
+  #c("- PMA", "Polyester\nColors\nHeat Killed"),
+  #c("- PMA", "1"),
+  #c("- PMA", "2")
+)
+
+# Plot settings
+custom_title <- "Example Boxplot"
+
+dodge_width <- 0.8
+box_width <- 0.6
+box_alpha <- 0.7
+
+title_size <- 30
+axis_x_size <- 20
+axis_y_tick_size <- 18
+axis_y_title_size <- 38
+legend_size <- 12
+
+jitter_width_grouped <- 0.2 
+jitter_width_ungrouped <- 0.8
+point_size <- 3
+point_alpha <- 0.6
+
+box_outlier_shape <- NA
+legend_position <- "right"
+
+pattern_fill_color <- "black"
+pattern_angle <- 45
+pattern_density <- 0.1
+pattern_spacing <- 0.05
+pattern_key_scale <- 0.6
+
+# Source color mapping
+source_colors <- c(
+  #"Run 6" = "#E41A1C",
+  #"Run 7" = "#377EB8",
+  #"Run 8" = "#6A0DAD",
+  #"Run 9" = "#4DAF4A"
+)
+
+if (length(conditions_to_plot) == 1 && conditions_to_plot == "") {
+  conditions_to_plot <- unique(NET_Data_Combined$Condition)
+}
+
+# === RUN ANALYSIS ===
+
+# 1. Prepare data
+plot_data <- prepare_plot_data(NET_Data_Combined, runs_to_plot, conditions_to_plot, 
+                               measure_to_plot, normalize)
+
+# Check if data exists
+if (nrow(plot_data) == 0) {
+  stop("No data found! Check that runs_to_plot matches Source names in your dataset.\n",
+       "Available sources: ", paste(unique(NET_Data_Combined$Source), collapse = ", "))
+}
+
+# 2. Setup comparison pairs
+condition_pairs <- setup_comparison_pairs(conditions_to_plot, use_custom_pairs, custom_pairs_list)
+correction_needed <- length(condition_pairs) > 1 && pairwise_correction != "none"
+
+cat("Statistical test method:", test_method, "\n")
+cat("Pairwise correction method:", pairwise_correction, "\n")
+cat("Correction needed?", correction_needed, "\n")
+
+# 3. Run statistical tests
+run_stats <- test_method != "none"
+
+if (run_stats) {
+pairwise_results <- switch(test_method,
+  "wilcoxon" = calculate_wilcoxon_pvalues(plot_data, condition_pairs, group_by_source, 
+                                         pairwise_correction, correction_needed),
+  "art_lmm" = calculate_art_lmm_pvalues(plot_data, condition_pairs, group_by_source, 
+                                        pairwise_correction, correction_needed,
+                                        run_string = paste(sort(as.numeric(gsub("Run ", "", unique(plot_data$Source)))), collapse = "&"),
+                                        measure_string_file = paste(gsub("%", "percent", measure_to_plot), collapse = "_"),
+                                        condition_code = gsub("[\n\\+]", " ", conditions_to_plot) %>%
+                                          strsplit(" ") %>%
+                                          lapply(\(words) paste0(substr(words[words != ""], 1, 1), collapse = "")) %>%
+                                          unlist() %>%
+                                          paste(collapse = "-")),
+  "rank_lmm" = calculate_rank_lmm_pvalues(plot_data, condition_pairs, group_by_source, 
+                                         pairwise_correction, correction_needed)
+)
+
+# Extract results
+if (pairwise_results$type == "grouped") {
+  run_comparisons <- pairwise_results$data
+} else {
+  overall_pairwise <- pairwise_results$data
+}
+}
+cat("========================================\n\n")
+
+# 4. Generate metadata and aesthetics
+metadata <- generate_metadata(plot_data, group_by_source, normalize, test_method,
+                             pairwise_correction, correction_needed, measure_to_plot,
+                             conditions_to_plot, use_custom_title, custom_title)
+
+aesthetics <- setup_plot_aesthetics(plot_data, source_colors, colored_boxes)
+
+
+# 5. Create base plot
+pattern_settings <- list(
+  fill = pattern_fill_color,
+  angle = pattern_angle,
+  density = pattern_density,
+  spacing = pattern_spacing,
+  key_scale = pattern_key_scale
+)
+
+
+if (group_by_source) {
+  p <- create_base_plot_grouped(plot_data, aesthetics, dodge_width, box_width, 
+                                box_alpha, box_outlier_shape, point_size, point_alpha,
+                                jitter_width_grouped, pattern_settings)
+  if (run_stats) {
+  p <- add_brackets_grouped(p, plot_data, run_comparisons, condition_pairs,
+                           conditions_to_plot, aesthetics, dodge_width)
+  }
+} else {
+  
+  p <- create_base_plot_ungrouped(plot_data, aesthetics, dodge_width, box_width,
+                                  box_alpha, box_outlier_shape, point_size, point_alpha,
+                                  jitter_width_ungrouped, pattern_settings)
+   if (run_stats) {
+  p <- add_brackets_ungrouped(p, plot_data, overall_pairwise, condition_pairs,
+                              conditions_to_plot, aesthetics, dodge_width)
+   }
+}
+
+
+# 6. Finalize and save
+p <- finalize_plot(p, metadata, aesthetics, title_size, axis_x_size,
+                  axis_y_tick_size, axis_y_title_size, legend_position, legend_size)
+
+plot_name <- save_and_display(p, metadata, test_method, pairwise_correction, file_type, save_width, save_height)
+```
+---
+## **Workflow:**
+
+1. **First time setup**: Run Chunks 1-7 once (defines all functions and imports data)
+2. **Generate plots**: Run Chunk 8, changing settings as needed
+
