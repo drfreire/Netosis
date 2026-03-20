@@ -7,6 +7,7 @@ date: "2026-03-20"
 ```{r print-platemap-conditions-labelled}
 # After creating a condition platemap .csv with a Well and Condition column, use this to produce an image guide
 library(ggplate)
+library(ggplot2)
 
 file_path <- file.choose()
 plate_map <- read.csv(file_path)
@@ -20,7 +21,7 @@ p <- plate_plot(
   value = Condition,
   plate_size = 96,
   plate_type = "round",
-    title = "NET Run 13", 
+    title = "To-Pro & Nuc-Blue Assay", 
   label = Condition,
   show_legend = FALSE,
   
@@ -33,7 +34,7 @@ p <- plate_plot(
   colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D", "#B33C47", "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266")
 )
 
-    ggsave("NET_Run13_Platemap.png", plot = p, width = 6, height = 4)
+    ggsave("LiveDead_Platemap.png", plot = p, width = 6, height = 4)
     
     plot(p)
 ```

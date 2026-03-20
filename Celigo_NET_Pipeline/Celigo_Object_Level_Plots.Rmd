@@ -1,0 +1,2860 @@
+---
+title: "Celigo Object level plots"
+output: html_notebook
+---
+
+```{r Obj-lvl-Scatter-Plot}
+# Specify source to plot
+source_to_plot <- "Run 10"  # Change this
+
+# Create plot data with condition labels and threshold status
+plot_data <- Object_Table[Source == source_to_plot & 
+                          Condition %in% c("Cells Only", "Cells Only + PMA") &
+                          !is.na(Gated_PC)]
+
+plot_data[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+plot_data[, Threshold_Label := ifelse(Gated_PC, "Gated", "Ungated")]
+
+# Plot
+p <- ggplot(plot_data, aes(x = Bright.Field.Integrated.Intensity, y = DAPI.Integrated.Intensity, 
+                           color = interaction(Condition_Label, Threshold_Label))) +
+  geom_point(alpha = 0.1, size = 0.1) +
+  #stat_density_2d(linewidth = 2) +
+  scale_color_manual(
+    values = c(
+      "- PMA.Gated" = "black",
+      "+ PMA.Gated" = "red",
+      "- PMA.Ungated" = "royalblue",
+      "+ PMA.Ungated" = "goldenrod"
+    ),
+    labels = c(
+      "- PMA (Gated)",
+      "+ PMA (Gated)",
+      "- PMA (Ungated)",
+      "+ PMA (Ungated)"
+    ),
+    guide = guide_legend(
+      override.aes = list(
+        shape = 15,   # large square
+        size = 5,     # size of legend symbol
+        alpha = 1     # fully visible
+      )
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = paste0("BF vs DAPI - ", source_to_plot),
+    x = "Bright Field Integrated Intensity",
+    y = "DAPI Integrated Intensity"
+  )
+
+print(p)
+ggsave(paste0("pca-fed-scatterBD_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 6, height = 5)
+```
+    
+```{r Obj-lvl-Scatter-Plot-v2}
+# --- 1. Prepare data ---
+source_to_plot <- "Run 10"
+
+threshold <- 25
+
+plot_data <- Object_Table[Source == source_to_plot & 
+                          Condition %in% c("Cells Only", "Cells Only + PMA") &
+                          !is.na(`10-Fold.Thresholded.CitH3.Mean.Intensity`)]
+
+# Calculate percentages above threshold for each condition
+pct_summary <- Object_Table[Condition %in% c("Cells Only", "Cells Only + PMA", "Cells Only No Stain + PMA") & Source == source_to_plot & 
+                            !is.na(DAPI.Mean.Intensity), .(
+  pct_above = sum(DAPI.Mean.Intensity >= threshold) / .N * 100
+), by = .(Condition)]
+
+# Create label text
+label_text <- paste0( 
+  pct_summary$Condition, ": ", round(pct_summary$pct_above, 1), "%",
+  collapse = "\n"
+)
+
+# Condition labels
+plot_data[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+
+# Subset thresholded cells
+dt_threshold <- plot_data[`10-Fold.Thresholded.CitH3.Mean.Intensity` == TRUE]
+
+# --- 2. Define colors ---
+condition_colors <- c("- PMA" = "royalblue", "+ PMA" = "goldenrod")
+
+# --- 3. Plot ---
+p <- ggplot() +
+  # Scatter all cells by condition
+  geom_point(data = plot_data, 
+             aes(x = DAPI.Mean.Intensity, y = MPO.Mean.Intensity, color = Condition_Label),
+             alpha = 0.1, size = 0.5) +
+  
+  # Density lines for thresholded cells, all red
+  geom_density_2d(data = dt_threshold, 
+                  aes(x = DAPI.Mean.Intensity, y = MPO.Mean.Intensity),
+                  color = "red",
+                  linewidth = 1) +
+  
+  # Threshold line
+   geom_vline(xintercept = threshold, linetype = "dashed", color = "black", linewidth = 1) +
+  annotate("text", x = threshold * 1.1, y = mean(plot_data$MPO.Mean.Intensity), na.rm = TRUE, 
+           label = paste0("Cells Above Threshold\n", label_text), hjust = 0, vjust = 0, size = 3.5, color = "black") +
+  
+  scale_color_manual(values = condition_colors) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = paste0("Scatter of Cells with Thresholded Density Overlay - ", source_to_plot),
+    x = "DAPI Mean Intensity",
+    y = "MPO Mean Intensity"
+  )
+
+print(p)
+
+ggsave(paste0("scatter_thresholded2x_red_", gsub(" ", "", source_to_plot), ".png"),
+       plot = p, width = 6, height = 5, dpi = 300)
+
+```
+    
+```{r Obj-lvl-Scatter-Plot-v3}
+# --- 1. Prepare data ---
+source_to_plot <- "Run 9"
+
+plot_data <- Object_Table[Source == source_to_plot & 
+                          Condition %in% c("Cells Only", "Cells Only + PMA") &
+                          !is.na(DAPI.Mean.Intensity) & !is.na(MPO.Mean.Intensity)]
+
+# Condition labels
+plot_data[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+
+# Subset thresholded cells (10-Fold threshold)
+dt_threshold <- plot_data[`10-Fold.Thresholded.CitH3.Mean.Intensity` == TRUE]
+
+# --- 2. Calculate % below diagonal threshold ---
+pct_summary <- plot_data[, .(
+  pct_below_diag = sum(MPO.Mean.Intensity <= DAPI.Mean.Intensity + 25) / .N * 100
+), by = Condition]
+
+label_text <- paste0(
+  pct_summary$Condition, ": ", round(pct_summary$pct_below_diag, 1), "%",
+  collapse = "\n"
+)
+
+# --- 3. Define colors ---
+condition_colors <- c("- PMA" = "royalblue", "+ PMA" = "goldenrod")
+
+# --- 4. Plot ---
+p <- ggplot() +
+  # Scatter of all cells
+  geom_point(data = plot_data,
+             aes(x = DAPI.Mean.Intensity, y = MPO.Mean.Intensity, color = Condition_Label),
+             alpha = 0.1, size = 0.5) +
+
+  # Density lines of thresholded cells (red)
+  geom_density_2d(data = dt_threshold,
+                  aes(x = DAPI.Mean.Intensity, y = MPO.Mean.Intensity),
+                  color = "red",
+                  linewidth = 1) +
+
+  # Diagonal y = x threshold line
+  geom_abline(slope = 1, intercept = 25,
+              linetype = "dashed", color = "black", linewidth = 1) +
+
+  # Annotate y = x threshold
+  annotate("text", x = max(plot_data$DAPI.Mean.Intensity) * 0.6, 
+           y = max(plot_data$DAPI.Mean.Intensity) * 0.62,
+           label = "y = x + 25 threshold", color = "black", hjust = 0, size = 4) +
+
+  # Annotate % below diagonal
+  annotate("text", x = max(plot_data$DAPI.Mean.Intensity) * 0.6, 
+           y = max(plot_data$MPO.Mean.Intensity) * 0.5,
+           label = paste0("Cells Below Diagonal\n", label_text),
+           hjust = 0, vjust = 0, size = 4, color = "black") +
+
+  scale_color_manual(values = condition_colors) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = paste0("Scatter with Threshold y = x - ", source_to_plot),
+    x = "DAPI Mean Intensity",
+    y = "MPO Mean Intensity"
+  )
+
+print(p)
+
+ggsave(paste0("scatter_y_equals_xplus25_threshold_", gsub(" ", "", source_to_plot), ".png"),
+       plot = p, width = 6, height = 5, dpi = 300)
+
+```
+    
+```{r Obj-lvl-Scatter-Plot-v4}
+# --- 1. USER SETTINGS ---
+source_to_plot <- "Run 10"
+x_measure <- "DAPI.Integrated.Intensity"
+y_measure <- "MPO.Mean.Intensity"
+
+# Y-intercept options: numeric value, "Q1", "Q1-median", or "median"
+y_intercept_type <- "Q1-median"  # Change this to: 25, "Q1", "Q1-median", or "median"
+
+# --- 2. Prepare data ---
+plot_data <- Object_Table[Source == source_to_plot & 
+                          Condition %in% c("Cells Only", "Cells Only + PMA") &
+                          !is.na(get(x_measure)) & !is.na(get(y_measure))]
+
+plot_data[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+dt_threshold <- plot_data[`10-Fold.Thresholded.CitH3.Mean.Intensity` == TRUE]
+
+# --- 3. Calculate y-intercept ---
+if (is.numeric(y_intercept_type)) {
+  y_intercept <- y_intercept_type
+  intercept_label <- as.character(y_intercept)
+} else if (y_intercept_type == "Q1") {
+  y_intercept <- quantile(plot_data[[y_measure]], 0.25, na.rm = TRUE)
+  intercept_label <- "Q1"
+} else if (y_intercept_type == "Q1-median") {
+  q1 <- quantile(plot_data[[y_measure]], 0.25, na.rm = TRUE)
+  med <- quantile(plot_data[[y_measure]], 0.5, na.rm = TRUE)
+  y_intercept <- (q1 + med) / 2
+  intercept_label <- "Q1-Med"
+} else if (y_intercept_type == "median") {
+  y_intercept <- quantile(plot_data[[y_measure]], 0.5, na.rm = TRUE)
+  intercept_label <- "Median"
+}
+
+# --- 4. Calculate % below diagonal threshold ---
+pct_summary <- plot_data[, .(
+  pct_below_diag = sum(get(y_measure) <= get(x_measure) + y_intercept) / .N * 100
+), by = Condition]
+
+label_text <- paste0(
+  pct_summary$Condition, ": ", round(pct_summary$pct_below_diag, 1), "%",
+  collapse = "\n"
+)
+
+# --- 5. Define colors ---
+condition_colors <- c("- PMA" = "royalblue", "+ PMA" = "goldenrod")
+
+# --- 6. Get data ranges for proper scaling ---
+x_range <- range(plot_data[[x_measure]], na.rm = TRUE)
+y_range <- range(plot_data[[y_measure]], na.rm = TRUE)
+
+# --- 7. Plot ---
+p <- ggplot() +
+  geom_point(data = plot_data,
+             aes(x = .data[[x_measure]], y = .data[[y_measure]], color = Condition_Label),
+             alpha = 0.1, size = 0.5) +
+  
+  geom_density_2d(data = dt_threshold,
+                  aes(x = .data[[x_measure]], y = .data[[y_measure]]),
+                  color = "red",
+                  linewidth = 1,
+                  bins = 5) +
+  
+  geom_abline(slope = 1, intercept = y_intercept,
+              linetype = "dashed", color = "black", linewidth = 1) +
+  
+  annotate("text", x = x_range[2] * 0.6, 
+           y = y_range[2] * 0.95,
+           label = paste0("y = x + ", round(y_intercept, 1), " (", intercept_label, ")"), 
+           color = "black", hjust = 0, size = 4) +
+  
+  annotate("text", x = x_range[2] * 0.6, 
+           y = y_range[2] * 0.85,
+           label = paste0("Cells Below Diagonal\n", label_text),
+           hjust = 0, vjust = 1, size = 4, color = "black") +
+  
+  scale_color_manual(values = condition_colors) +
+  coord_cartesian(xlim = x_range, ylim = y_range) +  # Fix scale to data
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = paste0("Scatter with Threshold - ", source_to_plot),
+    x = gsub("\\.", " ", x_measure),
+    y = gsub("\\.", " ", y_measure)
+  )
+
+print(p)
+
+# --- 8. Save with descriptive filename ---
+x_clean <- gsub("\\.", "_", x_measure)
+y_clean <- gsub("\\.", "_", y_measure)
+intercept_clean <- gsub("[^A-Za-z0-9]", "", intercept_label)
+
+ggsave(paste0("scatter_", y_clean, "_vs_", x_clean, "_", intercept_clean, "_", 
+              gsub(" ", "", source_to_plot), ".png"),
+       plot = p, width = 6, height = 5, dpi = 300)
+```
+    
+```{r Obj-lvl-Scatter-Plot-v5}
+# --- 1. USER SETTINGS ---
+source_to_plot <- "Run 7"
+y_measure <- "MPO.Mean.Intensity"
+x_measure <- "DAPI.Mean.Intensity"
+
+
+# Y-intercept options: numeric value, "Q1", "Q1-median", or "median"
+y_intercept_type <- "Q1-median"
+
+# Use z-scored threshold? (TRUE = threshold based on z-scores, FALSE = raw values)
+use_zscore_threshold <- TRUE
+
+# --- 2. Prepare data ---
+plot_data <- Object_Table[Source == source_to_plot & 
+                          Condition %in% c("Cells Only", "Cells Only + PMA") &
+                          !is.na(get(x_measure)) & !is.na(get(y_measure))]
+
+plot_data[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+dt_threshold <- plot_data[`10-Fold.Thresholded.CitH3.Mean.Intensity` == TRUE]
+
+# --- 3. Calculate y-intercept (always from raw data) ---
+if (is.numeric(y_intercept_type)) {
+  y_intercept <- y_intercept_type
+  intercept_label <- as.character(y_intercept)
+} else if (y_intercept_type == "Q1") {
+  y_intercept <- quantile(plot_data[[y_measure]], 0.25, na.rm = TRUE)
+  intercept_label <- "Q1"
+} else if (y_intercept_type == "Q1-median") {
+  q1 <- quantile(plot_data[[y_measure]], 0.25, na.rm = TRUE)
+  med <- quantile(plot_data[[y_measure]], 0.5, na.rm = TRUE)
+  y_intercept <- (q1 + med) / 2
+  intercept_label <- "Q1-Med"
+} else if (y_intercept_type == "median") {
+  y_intercept <- quantile(plot_data[[y_measure]], 0.5, na.rm = TRUE)
+  intercept_label <- "Median"
+}
+
+# --- 4. Calculate slope and apply threshold ---
+if (use_zscore_threshold) {
+  x_sd <- sd(plot_data[[x_measure]], na.rm = TRUE)
+  y_sd <- sd(plot_data[[y_measure]], na.rm = TRUE)
+  
+  # Z-scored slope (keeps y = x relationship in standardized space)
+  slope_raw <- y_sd / x_sd
+  intercept_raw <- y_intercept
+  
+  # For threshold calculation, we need to check: y <= slope * x + intercept
+  pct_summary <- plot_data[, .(
+    pct_below_diag = sum(get(y_measure) <= slope_raw * get(x_measure) + y_intercept) / .N * 100
+  ), by = Condition]
+  
+} else {
+  # Raw value approach: y = x + intercept
+  slope_raw <- 1
+  intercept_raw <- y_intercept
+  
+  pct_summary <- plot_data[, .(
+    pct_below_diag = sum(get(y_measure) <= get(x_measure) + y_intercept) / .N * 100
+  ), by = Condition]
+}
+
+label_text <- paste0(
+  pct_summary$Condition, ": ", round(pct_summary$pct_below_diag, 1), "%",
+  collapse = "\n"
+)
+
+# --- 5. Define colors ---
+condition_colors <- c("- PMA" = "royalblue", "+ PMA" = "goldenrod")
+
+# --- 6. Get data ranges ---
+x_range <- range(plot_data[[x_measure]], na.rm = TRUE)
+y_range <- range(plot_data[[y_measure]], na.rm = TRUE)
+
+# --- 7. Plot ---
+p <- ggplot() +
+  geom_point(data = plot_data,
+             aes(x = .data[[x_measure]], y = .data[[y_measure]], color = Condition_Label),
+             alpha = 0.1, size = 0.5) +
+  
+  geom_abline(slope = slope_raw, intercept = intercept_raw,
+              linetype = "dashed", color = "black", linewidth = 1) +
+  
+  geom_density_2d(data = dt_threshold,
+                  aes(x = .data[[x_measure]], y = .data[[y_measure]]),
+                  color = "red",
+                  linewidth = 1,
+                  bins = 5) +
+  
+  annotate("text", 
+           #x = x_range[2] * 0.6,
+           x = 0,
+           y = y_range[2] * 0.95,
+           label = paste0(ifelse(use_zscore_threshold, "z-scored slope, ", ""),
+                         "y-int = ", round(y_intercept, 1), " (", intercept_label, ")"), 
+           color = "black", hjust = 0, size = 4) +
+  
+  annotate("text", 
+           #x = x_range[2] * 0.6,
+           x = 0,
+           y = y_range[2] * 0.85,
+           label = paste0("Cells Below Diagonal\n", label_text),
+           hjust = 0, vjust = 1, size = 4, color = "black") +
+  
+  scale_color_manual(values = condition_colors) +
+  coord_cartesian(xlim = x_range, ylim = y_range) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = paste0("Scatter with Threshold - ", source_to_plot),
+    x = gsub("\\.", " ", x_measure),
+    y = gsub("\\.", " ", y_measure)
+  )
+
+print(p)
+
+# --- 8. Save ---
+x_clean <- gsub("\\.", "_", x_measure)
+y_clean <- gsub("\\.", "_", y_measure)
+intercept_clean <- gsub("[^A-Za-z0-9]", "", intercept_label)
+zscore_suffix <- ifelse(use_zscore_threshold, "_zscore", "")
+
+ggsave(paste0("scatter_", y_clean, "_vs_", x_clean, "_", intercept_clean, zscore_suffix, "_", 
+              gsub(" ", "", source_to_plot), ".png"),
+       plot = p, width = 6, height = 5, dpi = 300)
+```
+
+```{r Apply-and-Attach-v5-threshold-old}
+src <- "Run 7"
+y_measure <- "MPO.Mean.Intensity"
+x_measure <- "DAPI.Mean.Intensity"
+
+
+# Calculate threshold parameters from controls only
+thresh_params <- Object_Table[Source == src & 
+                              Condition %in% c("Cells Only", "Cells Only + PMA") &
+                              !is.na(get(x_measure)) & !is.na(get(y_measure))]
+
+x_sd <- sd(thresh_params[[x_measure]], na.rm = TRUE)
+y_sd <- sd(thresh_params[[y_measure]], na.rm = TRUE)
+slope_raw <- y_sd / x_sd
+
+q1 <- quantile(thresh_params[[y_measure]], 0.25, na.rm = TRUE)
+med <- quantile(thresh_params[[y_measure]], 0.5, na.rm = TRUE)
+y_intercept <- (q1 + med) / 2
+
+# Apply threshold to ALL conditions in this source
+Object_Table[Source == src & 
+             !is.na(get(x_measure)) & !is.na(get(y_measure)), 
+             Below_Diagonal := get(y_measure) <= slope_raw * get(x_measure) + y_intercept]
+
+# Summarize per well (now includes all conditions)
+well_totals <- Object_Table[Source == src & !is.na(Below_Diagonal), 
+                            .(total_points = .N), by = .(Well, Source)]
+diag_summary <- Object_Table[Source == src & Below_Diagonal == TRUE, 
+                             .(Diag_Thresh_points = .N), by = .(Well, Source, Condition)]
+
+diag_summary[Condition == "Cells Only\n+ PMA", Condition := "Cells Only + PMA"]
+
+diag_summary <- merge(diag_summary, well_totals, by = c("Well", "Source"), all.y = TRUE)
+diag_summary[is.na(Diag_Thresh_points), Diag_Thresh_points := 0]
+diag_summary[, Fraction.Below.Diagonal := Diag_Thresh_points / total_points]
+
+x_init <- paste0(substr(unlist(strsplit(x_measure, "\\.")), 1, 1), collapse = "")
+y_init <- paste0(substr(unlist(strsplit(y_measure, "\\.")), 1, 1), collapse = "")
+
+NET_Data_Combined[diag_summary, paste0("Fraction.Below.", y_init, ".vs.", x_init, ".Diagonal") := i.Fraction.Below.Diagonal, 
+                  on = c("Well", "Source")]
+```
+
+```{r Apply-and-Attach-v5-threshold-v2}
+src <- "Run 7"
+y_measure <- "MPO.Mean.Intensity"
+x_measure <- "DAPI.Mean.Intensity"
+
+# Calculate threshold parameters from controls only
+thresh_params <- Object_Table[Source == src & 
+                              Condition %in% c("Cells Only", "Cells Only + PMA") &
+                              !is.na(get(x_measure)) & !is.na(get(y_measure))]
+
+x_sd <- sd(thresh_params[[x_measure]], na.rm = TRUE)
+y_sd <- sd(thresh_params[[y_measure]], na.rm = TRUE)
+slope_raw <- y_sd / x_sd
+
+q1 <- quantile(thresh_params[[y_measure]], 0.25, na.rm = TRUE)
+med <- quantile(thresh_params[[y_measure]], 0.5, na.rm = TRUE)
+y_intercept <- (q1 + med) / 2
+
+# Apply threshold to ALL conditions in this source
+Object_Table[Source == src & 
+             !is.na(get(x_measure)) & !is.na(get(y_measure)), 
+             Below_Diagonal := get(y_measure) <= slope_raw * get(x_measure) + y_intercept]
+
+# Summarize per well - ADD Condition to both groupings
+well_totals <- Object_Table[Source == src & !is.na(Below_Diagonal), 
+                            .(total_points = .N), by = .(Well, Source, Condition)]
+
+diag_summary <- Object_Table[Source == src & Below_Diagonal == TRUE, 
+                             .(Diag_Thresh_points = .N), by = .(Well, Source, Condition)]
+
+# Fix condition name BEFORE merge
+diag_summary[Condition == "Cells Only\n+ PMA", Condition := "Cells Only + PMA"]
+well_totals[Condition == "Cells Only\n+ PMA", Condition := "Cells Only + PMA"]
+
+# Merge on Well, Source, AND Condition
+diag_summary <- merge(diag_summary, well_totals, by = c("Well", "Source", "Condition"), all.y = TRUE)
+
+diag_summary[is.na(Diag_Thresh_points), Diag_Thresh_points := 0]
+diag_summary[, Fraction.Below.Diagonal := Diag_Thresh_points / total_points]
+
+# Create dynamic column name
+x_init <- paste0(substr(unlist(strsplit(x_measure, "\\.")), 1, 1), collapse = "")
+y_init <- paste0(substr(unlist(strsplit(y_measure, "\\.")), 1, 1), collapse = "")
+
+# Fix condition name in NET_Data_Combined before merge
+NET_Data_Combined[Condition == "Cells Only\n+ PMA", Condition := "Cells Only + PMA"]
+
+# Merge into NET_Data_Combined
+NET_Data_Combined[diag_summary, 
+                  paste0("Fraction.Below.", y_init, ".vs.", x_init, ".Diagonal") := i.Fraction.Below.Diagonal, 
+                  on = c("Well", "Source")]
+
+# Return condition name in NET_Data_Combined after merge
+NET_Data_Combined[Condition == "Cells Only + PMA", Condition := "Cells Only\n+ PMA"]
+```
+
+```{r debug}
+# Check if well-level conditions match object-level
+Object_Table[Source == "Run 10", .(cells_per_well = .N), by = .(Well, Condition)]
+NET_Data_Combined[Source == "Run 10", .(Well, Condition)]
+```
+    
+```{r Obj-lvl-Scatter-Plot-only-gated}
+# Specify source to plot
+source_to_plot <- "Run 10"  # Change this
+
+# Create plot data with condition labels and threshold status
+plot_data <- Object_Table[Source == source_to_plot & 
+                          Condition %in% c("Cells Only", "Cells Only + PMA") &
+                          !is.na(Gated_PC) & 
+                          MPO.Mean.Intensity >= 12 &  
+                          DAPI.Mean.Intensity >= 12 &    
+                          Gated_PC == TRUE
+                          ]
+
+plot_data[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+
+# Plot
+p <- ggplot(plot_data, aes(x = DAPI.Mean.Intensity, y = MPO.Mean.Intensity, color = Condition_Label)) +
+  geom_point(alpha = 0.1, size = 0.1) +
+  stat_density_2d(linewidth = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1) +
+  scale_color_manual(
+    values = c(
+      "- PMA" = "darkblue",
+      "+ PMA" = "darkorange"
+    ),
+    labels = c(
+      "- PMA",
+      "+ PMA"
+    ),
+    guide = guide_legend(
+      override.aes = list(
+        shape = 15,  # large square
+        size = 5,    # size of legend symbol
+        alpha = 1    # fully visible
+      )
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  labs(
+    title = paste0("DAPI vs MPO - ", source_to_plot),
+    x = "DAPI Mean Intensity",
+    y = "MPO Mean Intensity"
+  )
+
+print(p)
+ggsave(paste0("pca-fed-gatescatterDM_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 6, height = 5)
+```
+    
+```{r PCA-scatterplot}
+# Specify source to plot
+source_to_plot <- "Run 7"  # Change this
+
+# Create plot data with renamed conditions
+plot_data <- Object_Table[Source == source_to_plot & 
+                          Condition %in% c("Cells Only", "Cells Only + PMA")]
+plot_data[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+
+# Plot
+p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Condition_Label)) +
+  geom_point(alpha = 0.05, size = 0.1) +
+  stat_density_2d(linewidth = 0.6) +
+  scale_color_manual(values = c("- PMA" = "royalblue", "+ PMA" = "goldenrod")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14),
+    plot.title = element_text(size = 16, hjust = 0.5)
+  ) +
+  labs(
+    title = paste0("PCA of ", source_to_plot),
+    x = "PC1",
+    y = "PC2"
+  )
+
+print(p)
+ggsave(paste0("PCA_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 8, height = 4)
+```
+
+```{r Violin-plot1}
+use_scatter_gate <- FALSE 
+use_PC_gate <- FALSE
+
+tdf <- if (use_PC_gate) {
+    Object_Table[Gated_PC == TRUE]
+} else {
+    Object_Table
+}
+
+tdf <- if (use_scatter_gate) {
+    Object_Table[in_gate == TRUE]
+} else {
+    Object_Table
+}
+
+y_var <- "Area"
+plot_title <- paste0("Distribution of ",  y_var, " (", unique(Object_Table$Mask), "_Mask)")
+plot_title <- gsub("[._]", " ", plot_title)
+
+  
+
+
+
+save_title <- paste0("violin-plot_", y_var, "_", unique(Object_Table$Mask), "_Mask.png")
+save_title <- gsub(" ", "_", save_title)
+
+# Subset your columns if needed
+df <- tdf[, .(Column, y = get(y_var))]
+
+# filter
+df <- df[Column %in% c("1", "2", "3", "4", "5")]
+# Convert Column to factor for plotting
+df[, Column := factor(Column, levels = c("1", "2", "3", "4", "5"),
+                              labels = c("No Stain", "Cells Only", "+ PMA", "Polyester Colors", "Polyester Colors\n+ UV"))]
+ 
+
+# Create a color mapping for your Column variable
+unique_columns <- unique(df$Column)
+
+# Define any colors you want to manually set
+column_colors <- c(
+  #"2" = "red",
+  #"3" = "blue"
+  # Add more if you have specific columns you want specific colors for
+)
+
+# Get predefined colors
+active_column_colors <- column_colors[names(column_colors) %in% unique_columns]
+
+# Auto-generate for missing columns
+missing_columns <- setdiff(unique_columns, names(column_colors))
+if (length(missing_columns) > 0) {
+  cat("Generating colors for columns:", paste(missing_columns, collapse = ", "), "\n")
+  new_colors <- brewer.pal(max(3, length(missing_columns)), "Set1")[1:length(missing_columns)]
+  names(new_colors) <- missing_columns
+  active_column_colors <- c(active_column_colors, new_colors)
+}
+# Ensure colors are in same order as unique_columns
+active_column_colors <- active_column_colors[as.character(unique_columns)]
+
+
+
+# Basic violin plot
+p <- ggplot(df, aes(x = Column, y = y, fill = Column)) +
+  geom_violin(trim = FALSE, alpha = 0.6, scale = "width") +
+  stat_summary(fun = median, geom = "point", size = 1.5, color = "black") +
+  scale_fill_manual(values = active_column_colors) +
+  theme_minimal() +
+  labs(
+    x = "Population",
+    y = y_var,
+    fill = "Condition",
+    title = plot_title
+  )
+
+ggsave(save_title, plot = p, width = 8, height = 6)
+cat(save_title)
+
+print(p)
+
+```
+
+```{r Violin1-with-mixedANOVA}
+
+use_gate <- FALSE 
+tdf <- if (use_gate) {
+    Object_Table[in_gate == TRUE]
+} else {
+    Object_Table
+}
+
+y_var <- "MPO:.Mean.Intensity"
+plot_title <- paste0("Distribution of ",  y_var, " (", unique(Object_Table$Mask), "_Mask)")
+plot_title <- gsub("[._]", " ", plot_title)
+  
+save_title <- paste0("violin-plot_", y_var, "_", unique(Object_Table$Mask), "_Mask.png")
+save_title <- gsub(" ", "_", save_title)
+
+df <- tdf[, .(Column, Well, y = get(y_var))]
+df <- df[Column %in% c("1", "2", "3", "4", "5")]
+df[, Column := factor(Column, levels = c("1", "2", "3", "4", "5"),
+                              labels = c("No Stain", "Cells Only", "+ PMA", 
+                                       "Polyester Colors\nHeat Killed", 
+                                       "Polyester Colors\n+ UV"))]
+
+# Run mixed-effects model
+model <- lmer(y ~ Column + (1|Well), data = df)
+
+# Get pairwise comparisons
+emm <- emmeans(model, ~ Column)
+pairs_result <- pairs(emm)
+
+# Extract p-values for specific comparisons
+comparisons_list <- list(
+  c("Cells Only", "+ PMA"),
+  c("Cells Only", "Polyester Colors\nHeat Killed"),
+  c("Cells Only", "Polyester Colors\n+ UV")
+)
+
+# Create labels with p-values from mixed model
+pval_labels <- data.frame()
+for (comp in comparisons_list) {
+  pair_row <- summary(pairs_result)[
+    (summary(pairs_result)$contrast == paste(comp[1], "-", comp[2]) |
+     summary(pairs_result)$contrast == paste(comp[2], "-", comp[1])), 
+  ]
+  if (nrow(pair_row) > 0) {
+    pval_labels <- rbind(pval_labels, data.frame(
+      group1 = comp[1],
+      group2 = comp[2],
+      p.value = pair_row$p.value,
+      p.label = ifelse(pair_row$p.value < 0.001, "p < 0.001", 
+                      paste("p =", round(pair_row$p.value, 3)))
+    ))
+  }
+}
+
+# Generate colors
+unique_columns <- unique(df$Column)
+column_colors <- c()
+active_column_colors <- column_colors[names(column_colors) %in% unique_columns]
+missing_columns <- setdiff(unique_columns, names(column_colors))
+if (length(missing_columns) > 0) {
+  new_colors <- brewer.pal(max(3, length(missing_columns)), "Set1")[1:length(missing_columns)]
+  names(new_colors) <- missing_columns
+  active_column_colors <- c(active_column_colors, new_colors)
+}
+active_column_colors <- active_column_colors[as.character(unique_columns)]
+
+# Create plot
+p <- ggplot(df, aes(x = Column, y = y, fill = Column)) +
+  geom_violin(trim = FALSE, alpha = 0.6, scale = "width") +
+  stat_summary(fun = median, geom = "point", size = 1.5, color = "black") +
+  scale_fill_manual(values = active_column_colors) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Population",
+    y = y_var,
+    fill = "Condition",
+    title = plot_title,
+    subtitle = "Mixed-effects ANOVA accounting for well clustering"
+  )
+
+# Convert to data frame and sort by p-value
+pairs_df <- as.data.frame(pairs_result)
+pairs_df <- pairs_df[order(pairs_df$p.value), ]
+
+# Add significance brackets for specified comparisons
+y_max <- max(df$y, na.rm = TRUE)
+y_range <- diff(range(df$y, na.rm = TRUE))
+
+pairs_df <- as.data.frame(pairs_result)
+
+for (i in seq_along(comparisons_list)) {
+  comp <- comparisons_list[[i]]
+  
+  # Find the matching row in pairs_df
+  pair_idx <- NULL
+  for (j in 1:nrow(pairs_df)) {
+    contrast_str <- as.character(pairs_df$contrast[j])
+    groups <- strsplit(contrast_str, " - ")[[1]]
+    group1 <- trimws(gsub("[()]", "", groups[1]))
+    group2 <- trimws(gsub("[()]", "", groups[2]))
+    
+    if ((group1 == comp[1] && group2 == comp[2]) || 
+        (group1 == comp[2] && group2 == comp[1])) {
+      pair_idx <- j
+      break
+    }
+  }
+  
+  if (!is.null(pair_idx)) {
+    p_val <- pairs_df$p.value[pair_idx]
+    p_label <- ifelse(p_val < 0.001, "p < 0.001", paste("p =", round(p_val, 4)))
+    
+    cat("\nComparison:", comp[1], "vs", comp[2], "- p =", p_val, "\n")
+    
+    y_pos <- y_max + y_range * (0.05 + (i-1) * 0.08)
+    x1 <- which(levels(df$Column) == comp[1])
+    x2 <- which(levels(df$Column) == comp[2])
+    
+    p <- p + 
+      annotate("segment", x = x1, xend = x2, y = y_pos, yend = y_pos, linewidth = 0.5) +
+      annotate("segment", x = x1, xend = x1, y = y_pos, yend = y_pos - y_range*0.02, linewidth = 0.5) +
+      annotate("segment", x = x2, xend = x2, y = y_pos, yend = y_pos - y_range*0.02, linewidth = 0.5) +
+      annotate("text", x = (x1+x2)/2, y = y_pos + y_range*0.02, 
+               label = p_label, size = 3)
+  } else {
+    cat("\nWARNING: Could not find comparison:", comp[1], "vs", comp[2], "\n")
+  }
+}
+
+ggsave(save_title, plot = p, width = 8, height = 7)
+cat(save_title, "\n")
+print(summary(model))
+print(pairs_result)
+print(p)
+```
+
+```{r Violin-plot-2sources}
+
+y_var <- "MPO: Mean Intensity"
+plot_title <- paste0("Distribution of ",  y_var)
+df <- dt_combined[, .(Column, y = get(y_var), Dataset)]
+
+# filter
+df <- df[Column %in% c("1", "2", "3", "4", "5")]
+
+# Convert Column to factor for plotting
+df[, Column := factor(Column, levels = c("1", "3", "2", "4", "5"),
+                              labels = c("No Stain", "Cells Only", "+ PMA", "Polyester Colors\nHeat Killed", "Polyester Colors\n+ UV"))]
+
+# === 3. Generate colors for DATASET (not Column) ===
+unique_datasets <- unique(df$Dataset)
+
+# Define manual colors for datasets if desired
+dataset_colors <- c(
+  "Experiment 1" = "lightblue",
+  "Experiment 2" = "lightcoral"
+)
+
+# Get predefined colors
+active_dataset_colors <- dataset_colors[names(dataset_colors) %in% unique_datasets]
+
+# Auto-generate for missing datasets
+missing_datasets <- setdiff(unique_datasets, names(dataset_colors))
+if (length(missing_datasets) > 0) {
+  cat("Generating colors for datasets:", paste(missing_datasets, collapse = ", "), "\n")
+  new_colors <- brewer.pal(max(3, length(missing_datasets)), "Set1")[1:length(missing_datasets)]
+  names(new_colors) <- missing_datasets
+  active_dataset_colors <- c(active_dataset_colors, new_colors)
+}
+
+# Ensure colors are in same order as unique_datasets
+active_dataset_colors <- active_dataset_colors[as.character(unique_datasets)]
+
+# Basic violin plot
+p <- ggplot(df, aes(x = Column, y = y, fill = Dataset)) +
+  geom_violin(trim = FALSE, alpha = 0.6, scale = "width") +
+  stat_summary(fun = median, geom = "point", size = 1.5, color = "black",
+               position = position_dodge(width = 0.9)) +
+  scale_fill_manual(values = active_dataset_colors) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    x = "Condition",
+    y = y_var,
+    fill = "Dataset",
+    title = plot_title
+  )
+
+ggsave("violin-plot-MPO-2-source.png", plot = p, width = 8, height = 6)
+
+print(p)
+```
+
+```{r Gated-Cell-Visualize}
+# === USER SETTINGS ===
+well_to_overlay <- "A3"           # Which well to visualize
+source_to_overlay <- "Run 7"      # Which source
+image_width_um <- 5682            # Width of microscopy image in µm (pixels)
+image_height_um <- 5682           # Height of microscopy image in µm (pixels)
+point_size_pixels <- 10            # Radius of each point in pixels
+output_filename <- "gated_overlay1.bmp"
+
+# === CREATE OVERLAY ===
+cat("Creating gated cell overlay for Well:", well_to_overlay, "Source:", source_to_overlay, "\n")
+
+# Filter gated cells
+gated_cells <- Object_Table[Gated_PC == TRUE & 
+                            Well == well_to_overlay & 
+                            Source == source_to_overlay &
+                            !is.na(`X.Position.(µm)`)]
+
+cat("Gated cells found:", nrow(gated_cells), "\n")
+
+if (nrow(gated_cells) == 0) {
+  stop("No gated cells found for specified well and source")
+}
+
+# Create black background matrix (3 channels for RGB)
+img <- array(0, dim = c(image_height_um, image_width_um, 3))
+
+# Convert µm coordinates to pixel coordinates (1 µm = 1 pixel)
+# Assuming coordinates start at 0,0
+gated_cells[, x_pixel := round(`X.Position.(µm)`) + 1]  # +1 for R 1-based indexing
+gated_cells[, y_pixel := round(`Y.Position.(µm)`) + 1]
+
+# Filter out-of-bounds coordinates
+gated_cells <- gated_cells[x_pixel >= 1 & x_pixel <= image_width_um &
+                           y_pixel >= 1 & y_pixel <= image_height_um]
+
+cat("Cells within image bounds:", nrow(gated_cells), "\n")
+
+# Draw red points (RGB: 1, 0, 0)
+for (i in 1:nrow(gated_cells)) {
+  x <- gated_cells$x_pixel[i]
+  y <- gated_cells$y_pixel[i]
+  
+  # Draw point with specified radius
+  for (dx in -point_size_pixels:point_size_pixels) {
+    for (dy in -point_size_pixels:point_size_pixels) {
+      if (dx^2 + dy^2 <= point_size_pixels^2) {  # Circle shape
+        px <- x + dx
+        py <- y + dy
+        if (px >= 1 && px <= image_width_um && py >= 1 && py <= image_height_um) {
+          img[py, px, 1] <- 1  # Red
+          img[py, px, 2] <- 0  # Green
+          img[py, px, 3] <- 0  # Blue 
+        }
+      }
+    }
+  }
+}
+
+cat("Drawing complete, saving to:", output_filename, "\n")
+
+# Save as BMP
+library(png)  # or use bmp() device
+
+# Convert to 0-255 range
+img_byte <- img * 255
+
+# Save using png package (then convert) or direct BMP
+bmp(filename = output_filename, 
+    width = image_width_um, 
+    height = image_height_um, 
+    units = "px", 
+    res = 72)  # Doesn't matter for overlay
+par(mar = c(0,0,0,0))
+plot(0, type = "n", xlim = c(0, image_width_um), ylim = c(0, image_height_um), 
+     xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "")
+rasterImage(img, 0, 0, image_width_um, image_height_um)
+dev.off()
+
+cat("\n=== OVERLAY COMPLETE ===\n")
+cat("File:", output_filename, "\n")
+cat("Dimensions:", image_width_um, "x", image_height_um, "pixels (µm)\n")
+cat("Gated cells plotted:", nrow(gated_cells), "\n")
+cat("Ready for manual overlay on microscopy image\n")
+```
+
+```{r Gated-Cell-Visualize-v2}
+# === USER SETTINGS ===
+well_to_overlay <- "B2"           # Which well to visualize
+source_to_overlay <- "Run 7"      # Which source
+image_width_um <- 5683            # Width of microscopy image in µm
+image_height_um <- 5683           # Height of microscopy image in µm
+point_size_pixels <- 6            # Radius of each point in pixels
+output_filename <- "gated_overlay.bmp"
+
+# === CREATE OVERLAY ===
+cat("Creating gated cell overlay for Well:", well_to_overlay, "Source:", source_to_overlay, "\n")
+
+# Filter gated cells
+gated_cells <- Object_Table[
+                            Gated_PC == TRUE & 
+                            Well == well_to_overlay & 
+                            Source == source_to_overlay &
+                            !is.na(`X.Position.(µm)`) &
+                            !is.na(`Y.Position.(µm)`)]
+
+cat("Gated cells found:", nrow(gated_cells), "\n")
+
+if (nrow(gated_cells) == 0) {
+  stop("No gated cells found for specified well and source")
+}
+
+# Calculate coordinate ranges for info
+x_min <- min(gated_cells$`X.Position.(µm)`)
+x_max <- max(gated_cells$`X.Position.(µm)`)
+y_min <- min(gated_cells$`Y.Position.(µm)`)
+y_max <- max(gated_cells$`Y.Position.(µm)`)
+
+cat("\nCoordinate ranges:\n")
+cat("X: [", x_min, ", ", x_max, "] µm\n", sep = "")
+cat("Y: [", y_min, ", ", y_max, "] µm\n", sep = "")
+
+# Create black background matrix (3 channels for RGB)
+img <- array(0, dim = c(image_height_um, image_width_um, 3))
+
+# Calculate center of canvas
+center_x <- round(image_width_um / 2)
+center_y <- round(image_height_um / 2)
+
+cat("\nCanvas center at pixel:", center_x, ",", center_y, "\n")
+cat("Coordinate (0,0) will map to pixel (", center_x, ",", center_y, ")\n", sep = "")
+
+# Map coordinates: (0,0) → center of canvas
+# x_pixel = x_coordinate + center
+# y_pixel = y_coordinate + center
+gated_cells[, x_pixel := round(`X.Position.(µm)`) + center_x]
+gated_cells[, y_pixel := round(`Y.Position.(µm)`) + center_y]
+
+#test rotations
+#gated_cells[, y_pixel := (-1 * round(`X.Position.(µm)`)) + center_x]
+#gated_cells[, x_pixel := (-1 * round(`Y.Position.(µm)`)) + center_y]
+
+# Filter out-of-bounds coordinates
+in_bounds <- gated_cells[x_pixel >= 1 & x_pixel <= image_width_um &
+                         y_pixel >= 1 & y_pixel <= image_height_um]
+out_of_bounds <- nrow(gated_cells) - nrow(in_bounds)
+
+cat("Cells within canvas bounds:", nrow(in_bounds), "\n")
+if (out_of_bounds > 0) {
+  cat("WARNING: ", out_of_bounds, " cells fall outside canvas\n", sep = "")
+}
+
+gated_cells <- in_bounds
+
+# Draw red points (RGB: 1, 0, 0)
+cat("Drawing points...\n")
+for (i in 1:nrow(gated_cells)) {
+  x <- gated_cells$x_pixel[i]
+  y <- gated_cells$y_pixel[i]
+  
+  # Draw point with specified radius
+  for (dx in -point_size_pixels:point_size_pixels) {
+    for (dy in -point_size_pixels:point_size_pixels) {
+      if (dx^2 + dy^2 <= point_size_pixels^2) {  # Circle shape
+        px <- x + dx
+        py <- y + dy
+        if (px >= 1 && px <= image_width_um && py >= 1 && py <= image_height_um) {
+          img[py, px, 1] <- 1  # Red
+          img[py, px, 2] <- 0  # Green
+          img[py, px, 3] <- 0  # Blue (R+G = Yellow)
+        }
+      }
+    }
+  }
+  
+  # Progress indicator
+  if (i %% 100 == 0) cat(".")
+}
+cat("\n")
+
+cat("Drawing complete, saving to:", output_filename, "\n")
+
+# Save as BMP
+bmp(filename = output_filename, 
+    width = image_width_um, 
+    height = image_height_um, 
+    units = "px")
+par(mar = c(0,0,0,0))
+plot(0, type = "n", xlim = c(0, image_width_um), ylim = c(0, image_height_um), 
+     xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "", bty = "n")
+rasterImage(img, 0, 0, image_width_um, image_height_um)
+dev.off()
+
+cat("\n=== OVERLAY COMPLETE ===\n")
+cat("File:", output_filename, "\n")
+cat("Dimensions:", image_width_um, "x", image_height_um, "pixels (µm)\n")
+cat("Center at pixel (", center_x, ",", center_y, ")\n", sep = "")
+cat("Gated cells plotted:", nrow(gated_cells), "\n")
+cat("Ready for manual overlay on microscopy image\n")
+```
+
+```{r Gated-Cell-Visualize-v3}
+# === USER SETTINGS ===
+well_to_overlay <- "A12"           # Which well to visualize
+source_to_overlay <- "Run 10"      # Which source
+image_width_um <- 5683            # Width of microscopy image in µm
+image_height_um <- 5683           # Height of microscopy image in µm
+point_size_pixels <- 6            # Radius of each point in pixels
+output_filename <- "cell_overlay.bmp"
+
+# === CREATE OVERLAY ===
+cat("Creating cell overlay for Well:", well_to_overlay, "Source:", source_to_overlay, "\n")
+
+# Filter columns
+cells <- Object_Table[
+                            Well == well_to_overlay & 
+                            Source == source_to_overlay &
+                            !is.na(`X.Position.(µm)`) &
+                            !is.na(`Y.Position.(µm)`)]
+
+cat("Cells found:", nrow(cells), "\n")
+
+if (nrow(cells) == 0) {
+  stop("No cells found for specified well and source")
+}
+
+# Calculate coordinate ranges for info
+x_min <- min(cells$`X.Position.(µm)`)
+x_max <- max(cells$`X.Position.(µm)`)
+y_min <- min(cells$`Y.Position.(µm)`)
+y_max <- max(cells$`Y.Position.(µm)`)
+
+cat("\nCoordinate ranges:\n")
+cat("X: [", x_min, ", ", x_max, "] µm\n", sep = "")
+cat("Y: [", y_min, ", ", y_max, "] µm\n", sep = "")
+
+# Create black background matrix (3 channels for RGB)
+img <- array(0, dim = c(image_height_um, image_width_um, 3))
+
+# Calculate center of canvas
+center_x <- round(image_width_um / 2)
+center_y <- round(image_height_um / 2)
+
+cat("\nCanvas center at pixel:", center_x, ",", center_y, "\n")
+cat("Coordinate (0,0) will map to pixel (", center_x, ",", center_y, ")\n", sep = "")
+
+# Map coordinates: (0,0) → center of canvas
+# x_pixel = x_coordinate + center
+# y_pixel = y_coordinate + center
+cells[, x_pixel := round(`X.Position.(µm)`) + center_x]
+cells[, y_pixel := round(`Y.Position.(µm)`) + center_y]
+
+#test rotations
+#gated_cells[, y_pixel := (-1 * round(`X.Position.(µm)`)) + center_x]
+#gated_cells[, x_pixel := (-1 * round(`Y.Position.(µm)`)) + center_y]
+
+# Filter out-of-bounds coordinates
+in_bounds <- cells[x_pixel >= 1 & x_pixel <= image_width_um &
+                         y_pixel >= 1 & y_pixel <= image_height_um]
+out_of_bounds <- nrow(cells) - nrow(in_bounds)
+
+cat("Cells within canvas bounds:", nrow(in_bounds), "\n")
+if (out_of_bounds > 0) {
+  cat("WARNING: ", out_of_bounds, " cells fall outside canvas\n", sep = "")
+}
+
+cells <- in_bounds
+
+# Draw red points (RGB: 1, 0, 0)
+cat("Drawing points...\n")
+for (i in 1:nrow(cells)) {
+  x <- cells$x_pixel[i]
+  y <- cells$y_pixel[i]
+  
+  # Draw point with specified radius
+  for (dx in -point_size_pixels:point_size_pixels) {
+    for (dy in -point_size_pixels:point_size_pixels) {
+      if (dx^2 + dy^2 <= point_size_pixels^2) {  # Circle shape
+        px <- x + dx
+        py <- y + dy
+        if (px >= 1 && px <= image_width_um && py >= 1 && py <= image_height_um) {
+          
+          is_gated <- cells$Gated_PC[i]
+
+if (is_gated) {
+  # TRUE → Red
+  img[py, px, 1] <- 1
+  img[py, px, 2] <- 0
+  img[py, px, 3] <- 0
+} else {
+  # FALSE → Blue
+  img[py, px, 1] <- 0
+  img[py, px, 2] <- 0
+  img[py, px, 3] <- 1
+}
+        }
+      }
+    }
+  }
+  
+  # Progress indicator
+  if (i %% 100 == 0) cat(".")
+}
+cat("\n")
+
+cat("Drawing complete, saving to:", output_filename, "\n")
+
+# Save as BMP
+bmp(filename = output_filename, 
+    width = image_width_um, 
+    height = image_height_um, 
+    units = "px")
+par(mar = c(0,0,0,0))
+plot(0, type = "n", xlim = c(0, image_width_um), ylim = c(0, image_height_um), 
+     xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "", bty = "n")
+rasterImage(img, 0, 0, image_width_um, image_height_um)
+dev.off()
+
+cat("\n=== OVERLAY COMPLETE ===\n")
+cat("File:", output_filename, "\n")
+cat("Dimensions:", image_width_um, "x", image_height_um, "pixels (µm)\n")
+cat("Center at pixel (", center_x, ",", center_y, ")\n", sep = "")
+cat("Total cells plotted:", nrow(cells), "\n")
+cat("Gated (TRUE):", sum(cells$Gated_PC == TRUE), "\n")
+cat("Ungated (FALSE):", sum(cells$Gated_PC == FALSE), "\n")
+cat("Ready for manual overlay on microscopy image\n")
+```
+
+```{r affine-combo-WORKS}
+# === STEP 1: AFFINE TRANSFORMATION ===
+library(MASS)
+
+test_data <- data.table(
+  mic_x = c(785, 1243, 841, 1255, 1483, 1549, 1805, 1959, 2862, 2688, 2914, 4369, 3422, 2981, 2920),
+  mic_y = c(2763, 2770, 2498, 2587, 3199, 1418, 1714, 2019, 913, 1317, 1900, 3405, 3650, 2671, 2684),
+  real_x = c(903, 1337, 957, 1349, 1563, 1627, 1867, 2013, 2868, 2703, 2917, 4320, 3398, 2981, 2922),
+  real_y = c(2759, 2767, 2509, 2594, 3170, 1488, 1768, 2059, 1010, 1393, 1943, 3369, 3598, 2671, 2682)
+)
+
+test_data[, c("mic_x", "mic_y") := .(mic_x - 2841, mic_y - 2841)]
+
+# Fit affine transformation
+affine_x <- lm(real_x ~ mic_x + mic_y, data = test_data)
+affine_y <- lm(real_y ~ mic_x + mic_y, data = test_data)
+
+cat("=== AFFINE TRANSFORMATION ===\n")
+cat("X = ", round(coef(affine_x)[1], 2), " + ", 
+    round(coef(affine_x)[2], 6), "·mic_x + ", 
+    round(coef(affine_x)[3], 6), "·mic_y\n", sep = "")
+cat("Y = ", round(coef(affine_y)[1], 2), " + ", 
+    round(coef(affine_y)[2], 6), "·mic_x + ", 
+    round(coef(affine_y)[3], 6), "·mic_y\n\n", sep = "")
+
+# Apply affine to get intermediate positions
+test_data[, affine_x := predict(affine_x, .SD)]
+test_data[, affine_y := predict(affine_y, .SD)]
+
+# Calculate residual errors after affine
+test_data[, affine_error := sqrt((affine_x - real_x)^2 + (affine_y - real_y)^2)]
+
+cat("Affine-only errors:\n")
+print(test_data[, .(mic_x, mic_y, affine_error)])
+cat("\nMean error:", round(mean(test_data$affine_error), 1), "pixels\n")
+cat("Max error:", round(max(test_data$affine_error), 1), "pixels\n\n")
+
+# === STEP 2: RADIAL CORRECTION ON RESIDUALS ===
+# If affine errors still show radial pattern, fit radial correction
+
+# Find center of affine-corrected space (mean of predictions)
+center_x <- mean(test_data$affine_x)
+center_y <- mean(test_data$affine_y)
+
+cat("Center of affine-corrected space: (", round(center_x), ", ", round(center_y), ")\n\n", sep = "")
+
+# Calculate radial distances in affine-corrected space
+test_data[, r_affine := sqrt((affine_x - center_x)^2 + (affine_y - center_y)^2)]
+test_data[, r_real := sqrt((real_x - center_x)^2 + (real_y - center_y)^2)]
+test_data[, scale_needed := r_real / r_affine]
+test_data[, delta := scale_needed - 1]
+
+# Fit radial distortion on top of affine
+radial_model <- lm(delta ~ 0 + I(r_affine^2) + I(r_affine^4), data = test_data)
+k1 <- coef(radial_model)[1]
+k2 <- coef(radial_model)[2]
+
+cat("=== RADIAL DISTORTION (on top of affine) ===\n")
+cat("scale(r) = 1 +", format(k1, scientific = TRUE), "· r² +",
+    format(k2, scientific = TRUE), "· r⁴\n")
+cat("R-squared:", round(summary(radial_model)$r.squared, 4), "\n\n")
+
+# === STEP 3: COMBINED PREDICTION ===
+cat("=== COMBINED (AFFINE + RADIAL) PREDICTIONS ===\n")
+for (i in 1:nrow(test_data)) {
+  # Step 1: Apply affine
+  affine_pred_x <- predict(affine_x, test_data[i])
+  affine_pred_y <- predict(affine_y, test_data[i])
+  
+  # Step 2: Apply radial correction
+  r <- sqrt((affine_pred_x - center_x)^2 + (affine_pred_y - center_y)^2)
+  scale <- 1 + k1 * r^2 + k2 * r^4
+  
+  final_x <- round((affine_pred_x - center_x) * scale + center_x)
+  final_y <- round((affine_pred_y - center_y) * scale + center_y)
+  
+  error <- sqrt((final_x - test_data$real_x[i])^2 + 
+                (final_y - test_data$real_y[i])^2)
+  
+  cat("Cell", i, ": Predicted (", final_x, ", ", final_y, 
+      ") | Actual (", test_data$real_x[i], ", ", test_data$real_y[i], 
+      ") | Error:", round(error, 1), "px\n", sep = "")
+}
+
+cat("\n=== TO USE THIS MODEL ===\n")
+cat("1. Apply affine:\n")
+cat("   x_temp = ", round(coef(affine_x)[1], 2), " + ", 
+    round(coef(affine_x)[2], 6), "·mic_x + ", 
+    round(coef(affine_x)[3], 6), "·mic_y\n", sep = "")
+cat("   y_temp = ", round(coef(affine_y)[1], 2), " + ", 
+    round(coef(affine_y)[2], 6), "·mic_x + ", 
+    round(coef(affine_y)[3], 6), "·mic_y\n", sep = "")
+cat("\n2. Apply radial:\n")
+cat("   r = sqrt((x_temp - ", round(center_x), ")² + (y_temp - ", round(center_y), ")²)\n", sep = "")
+cat("   scale = 1 +", format(k1, scientific = TRUE), "·r² +", format(k2, scientific = TRUE), "·r⁴\n")
+cat("   final_x = (x_temp - ", round(center_x), ") × scale + ", round(center_x), "\n", sep = "")
+cat("   final_y = (y_temp - ", round(center_y), ") × scale + ", round(center_y), "\n", sep = "")
+```
+
+```{r Affine-Radial-Distortion-correction}
+# === APPLY TRANSFORMATION TO COORDINATES ===
+
+# Transformation parameters (from affine script)
+affine_x_intercept <- 2853.25
+affine_x_coef_x <- 0.949288
+affine_x_coef_y <- 0.002611
+
+affine_y_intercept <- 2833.28
+affine_y_coef_x <- 7.9e-05
+affine_y_coef_y <- 0.945319
+
+radial_center_x <- 2248
+radial_center_y <- 2385
+k1 <- -2.805967e-09
+k2 <- 7.814928e-16
+
+# Apply transformation to gated_cells
+gated_cells[, `:=`(
+  # Step 1: Affine transformation
+  x_temp = affine_x_intercept + affine_x_coef_x * `X.Position.(µm)` + affine_x_coef_y * `Y.Position.(µm)`,
+  y_temp = affine_y_intercept + affine_y_coef_x * `X.Position.(µm)` + affine_y_coef_y * `Y.Position.(µm)`
+)]
+
+# Step 2: Radial correction
+gated_cells[, `:=`(
+  r = sqrt((x_temp - radial_center_x)^2 + (y_temp - radial_center_y)^2)
+)]
+
+gated_cells[, `:=`(
+  scale = 1 + k1 * r^2 + k2 * r^4
+)]
+
+gated_cells[, `:=`(
+  x_pixel = round((x_temp - radial_center_x) * scale + radial_center_x),
+  y_pixel = round((y_temp - radial_center_y) * scale + radial_center_y)
+)]
+
+# Clean up temporary columns
+gated_cells[, c("x_temp", "y_temp", "r", "scale") := NULL]
+
+# Now x_pixel and y_pixel are corrected and ready for overlay
+cat("Transformation applied to", nrow(gated_cells), "cells\n")
+cat("Coordinate range - X: [", min(gated_cells$x_pixel), ", ", max(gated_cells$x_pixel), "]\n", sep = "")
+cat("Coordinate range - Y: [", min(gated_cells$y_pixel), ", ", max(gated_cells$y_pixel), "]\n", sep = "")
+```
+
+```{r Cell-Visualize-v1}
+# === USER SETTINGS ===
+well_to_overlay <- "A4"           # Which well to visualize
+source_to_overlay <- "Run 9"      # Which source
+image_width_um <- 5683            # Width of microscopy image in µm
+image_height_um <- 5683           # Height of microscopy image in µm
+point_size_pixels <- 6            # Radius of each point in pixels
+output_filename <- "cell_overlay.bmp"
+
+# === CREATE OVERLAY ===
+cat("Creating cell overlay for Well:", well_to_overlay, "Source:", source_to_overlay, "\n")
+
+# Filter columns
+cells <- Object_Table[
+                            Well == well_to_overlay & 
+                            Source == source_to_overlay &
+                            !is.na(`X.Position.(µm)`) &
+                            !is.na(`Y.Position.(µm)`)]
+
+# ==========================================
+# ========== Distortion Correction =========
+# ==========================================
+
+# === APPLY TRANSFORMATION TO COORDINATES ===
+
+# Transformation parameters (from affine-combo script)
+affine_x_intercept <- 2853.25
+affine_x_coef_x <- 0.949288
+affine_x_coef_y <- 0.002611
+
+affine_y_intercept <- 2833.28
+affine_y_coef_x <- 7.9e-05
+affine_y_coef_y <- 0.945319
+
+radial_center_x <- 2248
+radial_center_y <- 2385
+k1 <- -2.805967e-09
+k2 <- 7.814928e-16
+
+# Apply transformation to cells
+cells[, `:=`(
+  # Step 1: Affine transformation
+  x_temp = affine_x_intercept + affine_x_coef_x * `X.Position.(µm)` + affine_x_coef_y * `Y.Position.(µm)`,
+  y_temp = affine_y_intercept + affine_y_coef_x * `X.Position.(µm)` + affine_y_coef_y * `Y.Position.(µm)`
+)]
+
+# Step 2: Radial correction
+cells[, `:=`(
+  r = sqrt((x_temp - radial_center_x)^2 + (y_temp - radial_center_y)^2)
+)]
+
+cells[, `:=`(
+  scale = 1 + k1 * r^2 + k2 * r^4
+)]
+
+cells[, `:=`(
+  x_pixel = round((x_temp - radial_center_x) * scale + radial_center_x),
+  y_pixel = round((y_temp - radial_center_y) * scale + radial_center_y)
+)]
+
+# Clean up temporary columns
+cells[, c("x_temp", "y_temp", "r", "scale") := NULL]
+
+# Now x_pixel and y_pixel are corrected and ready for overlay
+cat("Transformation applied to", nrow(cells), "cells\n")
+cat("Coordinate range - X: [", min(cells$x_pixel), ", ", max(cells$x_pixel), "]\n", sep = "")
+cat("Coordinate range - Y: [", min(cells$y_pixel), ", ", max(cells$y_pixel), "]\n", sep = "")
+
+cat("Cells found:", nrow(cells), "\n")
+
+if (nrow(cells) == 0) {
+  stop("No cells found for specified well and source")
+}
+
+
+# Create black background matrix (3 channels for RGB)
+img <- array(0, dim = c(image_height_um, image_width_um, 3))
+
+# Calculate center of canvas
+center_x <- round(image_width_um / 2)
+center_y <- round(image_height_um / 2)
+
+cat("\nCanvas center at pixel:", center_x, ",", center_y, "\n")
+cat("Coordinate (0,0) will map to pixel (", center_x, ",", center_y, ")\n", sep = "")
+
+# Map coordinates: (0,0) → center of canvas
+# x_pixel = x_coordinate + center
+# y_pixel = y_coordinate + center
+#cells[, x_pixel := round(`X.Position.(µm)`) + center_x]
+#cells[, y_pixel := round(`Y.Position.(µm)`) + center_y]
+
+
+
+
+# Draw red points (RGB: 1, 0, 0)
+cat("Drawing points...\n")
+for (i in 1:nrow(cells)) {
+  x <- cells$x_pixel[i]
+  y <- cells$y_pixel[i]
+  
+  # Draw point with specified radius
+  for (dx in -point_size_pixels:point_size_pixels) {
+    for (dy in -point_size_pixels:point_size_pixels) {
+      if (dx^2 + dy^2 <= point_size_pixels^2) {  # Circle shape
+        px <- x + dx
+        py <- y + dy
+        if (px >= 1 && px <= image_width_um && py >= 1 && py <= image_height_um) {
+  img[py, px, 1] <- 1
+  img[py, px, 2] <- 0
+  img[py, px, 3] <- 0
+
+        }
+      }
+    }
+  }
+  
+  # Progress indicator
+  if (i %% 100 == 0) cat(".")
+}
+cat("\n")
+
+cat("Drawing complete, saving to:", output_filename, "\n")
+
+# Save as BMP
+bmp(filename = output_filename, 
+    width = image_width_um, 
+    height = image_height_um, 
+    units = "px")
+par(mar = c(0,0,0,0))
+plot(0, type = "n", xlim = c(0, image_width_um), ylim = c(0, image_height_um), 
+     xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "", bty = "n")
+rasterImage(img, 0, 0, image_width_um, image_height_um)
+dev.off()
+
+cat("\n=== OVERLAY COMPLETE ===\n")
+cat("File:", output_filename, "\n")
+cat("Dimensions:", image_width_um, "x", image_height_um, "pixels (µm)\n")
+cat("Center at pixel (", center_x, ",", center_y, ")\n", sep = "")
+cat("Total cells plotted:", nrow(cells), "\n")
+cat("Ready for manual overlay on microscopy image\n")
+```
+
+```{r Cell-Visualize-v2}
+# === USER SETTINGS ===
+well_to_overlay <- "A3"           # Which well to visualize
+source_to_overlay <- "Run 9"      # Which source
+image_width_um <- 5683            # Width of microscopy image in µm
+image_height_um <- 5683           # Height of microscopy image in µm
+point_size_pixels <- 6            # Radius of each point in pixels
+output_filename <- "cell_overlay.bmp"
+
+# === COLOR SCHEME ===
+# Define colors for each quadrant (RGB values 0-1)
+colors <- list(
+  A = c(1, 0, 0),      # Red
+  B = c(0, 1, 0),      # Green
+  C = c(0, 0, 1),      # Blue
+  D = c(1, 1, 0),      # Yellow
+  default = c(1, 1, 1) # White
+)
+
+# === CREATE OVERLAY ===
+cat("Creating cell overlay for Well:", well_to_overlay, "Source:", source_to_overlay, "\n")
+
+# Filter columns
+cells <- Object_Table[
+                            Well == well_to_overlay & 
+                            Source == source_to_overlay &
+                            !is.na(`X.Position.(µm)`) &
+                            !is.na(`Y.Position.(µm)`)]
+
+# ==========================================
+# ========== Distortion Correction =========
+# ==========================================
+
+# === APPLY TRANSFORMATION TO COORDINATES ===
+
+# Transformation parameters (from affine-combo script)
+affine_x_intercept <- 2853.25
+affine_x_coef_x <- 0.949288
+affine_x_coef_y <- 0.002611
+
+affine_y_intercept <- 2833.28
+affine_y_coef_x <- 7.9e-05
+affine_y_coef_y <- 0.945319
+
+radial_center_x <- 2248
+radial_center_y <- 2385
+k1 <- -2.805967e-09
+k2 <- 7.814928e-16
+
+# Apply transformation to cells
+cells[, `:=`(
+  # Step 1: Affine transformation
+  x_temp = affine_x_intercept + affine_x_coef_x * `X.Position.(µm)` + affine_x_coef_y * `Y.Position.(µm)`,
+  y_temp = affine_y_intercept + affine_y_coef_x * `X.Position.(µm)` + affine_y_coef_y * `Y.Position.(µm)`
+)]
+
+# Step 2: Radial correction
+cells[, `:=`(
+  r = sqrt((x_temp - radial_center_x)^2 + (y_temp - radial_center_y)^2)
+)]
+
+cells[, `:=`(
+  scale = 1 + k1 * r^2 + k2 * r^4
+)]
+
+cells[, `:=`(
+  x_pixel = round((x_temp - radial_center_x) * scale + radial_center_x),
+  y_pixel = round((y_temp - radial_center_y) * scale + radial_center_y)
+)]
+
+# Clean up temporary columns
+cells[, c("x_temp", "y_temp", "r", "scale") := NULL]
+
+# === ASSIGN COLORS BASED ON QUADRANT ===
+cells[, color_r := colors$default[1]]
+cells[, color_g := colors$default[2]]
+cells[, color_b := colors$default[3]]
+
+# Check for each quadrant column and assign color
+if ("PC.Quadrant.A" %in% names(cells)) {
+  cells[PC.Quadrant.A == TRUE, `:=`(color_r = colors$A[1], color_g = colors$A[2], color_b = colors$A[3])]
+}
+if ("PC.Quadrant.B" %in% names(cells)) {
+  cells[PC.Quadrant.B == TRUE, `:=`(color_r = colors$B[1], color_g = colors$B[2], color_b = colors$B[3])]
+}
+if ("PC.Quadrant.C" %in% names(cells)) {
+  cells[PC.Quadrant.C == TRUE, `:=`(color_r = colors$C[1], color_g = colors$C[2], color_b = colors$C[3])]
+}
+if ("PC.Quadrant.D" %in% names(cells)) {
+  cells[PC.Quadrant.D == TRUE, `:=`(color_r = colors$D[1], color_g = colors$D[2], color_b = colors$D[3])]
+}
+
+# Now x_pixel and y_pixel are corrected and ready for overlay
+cat("Transformation applied to", nrow(cells), "cells\n")
+cat("Coordinate range - X: [", min(cells$x_pixel), ", ", max(cells$x_pixel), "]\n", sep = "")
+cat("Coordinate range - Y: [", min(cells$y_pixel), ", ", max(cells$y_pixel), "]\n", sep = "")
+
+cat("Cells found:", nrow(cells), "\n")
+
+if (nrow(cells) == 0) {
+  stop("No cells found for specified well and source")
+}
+
+# Create black background matrix (3 channels for RGB)
+img <- array(0, dim = c(image_height_um, image_width_um, 3))
+
+# Calculate center of canvas
+center_x <- round(image_width_um / 2)
+center_y <- round(image_height_um / 2)
+
+cat("\nCanvas center at pixel:", center_x, ",", center_y, "\n")
+cat("Coordinate (0,0) will map to pixel (", center_x, ",", center_y, ")\n", sep = "")
+
+# Draw colored points
+cat("Drawing points...\n")
+for (i in 1:nrow(cells)) {
+  x <- cells$x_pixel[i]
+  y <- cells$y_pixel[i]
+  
+  # Get color for this cell
+  r_val <- cells$color_r[i]
+  g_val <- cells$color_g[i]
+  b_val <- cells$color_b[i]
+  
+  # Draw point with specified radius
+  for (dx in -point_size_pixels:point_size_pixels) {
+    for (dy in -point_size_pixels:point_size_pixels) {
+      if (dx^2 + dy^2 <= point_size_pixels^2) {  # Circle shape
+        px <- x + dx
+        py <- y + dy
+        if (px >= 1 && px <= image_width_um && py >= 1 && py <= image_height_um) {
+          img[py, px, 1] <- r_val
+          img[py, px, 2] <- g_val
+          img[py, px, 3] <- b_val
+        }
+      }
+    }
+  }
+  
+  # Progress indicator
+  if (i %% 100 == 0) cat(".")
+}
+cat("\n")
+
+cat("Drawing complete, saving to:", output_filename, "\n")
+
+# Save as BMP
+bmp(filename = output_filename, 
+    width = image_width_um, 
+    height = image_height_um, 
+    units = "px")
+par(mar = c(0,0,0,0))
+plot(0, type = "n", xlim = c(0, image_width_um), ylim = c(0, image_height_um), 
+     xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "", bty = "n")
+rasterImage(img, 0, 0, image_width_um, image_height_um)
+dev.off()
+
+cat("\n=== OVERLAY COMPLETE ===\n")
+cat("File:", output_filename, "\n")
+cat("Dimensions:", image_width_um, "x", image_height_um, "pixels (µm)\n")
+cat("Center at pixel (", center_x, ",", center_y, ")\n", sep = "")
+cat("Total cells plotted:", nrow(cells), "\n")
+cat("Color scheme: A=Red, B=Green, C=Blue, D=Yellow, Other=White\n")
+cat("Ready for manual overlay on microscopy image\n")
+```
+
+```{r Cell-Visualize-with-threshold}
+# === USER SETTINGS ===
+well_to_overlay <- "A2"
+source_to_overlay <- "Run 9"
+image_width_um <- 5683
+image_height_um <- 5683
+point_size_pixels <- 6
+output_filename <- "cell_overlay_threshold.bmp"
+
+# Threshold column name
+threshold_col <- "10-Fold.Thresholded.CitH3.Mean.Intensity"
+
+# === COLOR SCHEME ===
+colors <- list(
+  "TRUE" = c(1, 0, 0),    # Red for above threshold
+  "FALSE" = c(0, 0, 1)    # Blue for below threshold
+)
+
+# === CREATE OVERLAY ===
+cat("Creating cell overlay for Well:", well_to_overlay, "Source:", source_to_overlay, "\n")
+
+# Filter columns
+cells <- Object_Table[Well == well_to_overlay & 
+                      Source == source_to_overlay &
+                      !is.na(`X.Position.(µm)`) &
+                      !is.na(`Y.Position.(µm)`)]
+
+# ==========================================
+# ========== Distortion Correction =========
+# ==========================================
+
+# Transformation parameters
+affine_x_intercept <- 2853.25
+affine_x_coef_x <- 0.949288
+affine_x_coef_y <- 0.002611
+
+affine_y_intercept <- 2833.28
+affine_y_coef_x <- 7.9e-05
+affine_y_coef_y <- 0.945319
+
+radial_center_x <- 2248
+radial_center_y <- 2385
+k1 <- -2.805967e-09
+k2 <- 7.814928e-16
+
+# Apply transformation
+cells[, `:=`(
+  x_temp = affine_x_intercept + affine_x_coef_x * `X.Position.(µm)` + affine_x_coef_y * `Y.Position.(µm)`,
+  y_temp = affine_y_intercept + affine_y_coef_x * `X.Position.(µm)` + affine_y_coef_y * `Y.Position.(µm)`
+)]
+
+cells[, r := sqrt((x_temp - radial_center_x)^2 + (y_temp - radial_center_y)^2)]
+cells[, scale := 1 + k1 * r^2 + k2 * r^4]
+
+cells[, `:=`(
+  x_pixel = round((x_temp - radial_center_x) * scale + radial_center_x),
+  y_pixel = round((y_temp - radial_center_y) * scale + radial_center_y)
+)]
+
+cells[, c("x_temp", "y_temp", "r", "scale") := NULL]
+
+# === ASSIGN COLORS BASED ON THRESHOLD ===
+cells[, color_r := colors$"FALSE"[1]]
+cells[, color_g := colors$"FALSE"[2]]
+cells[, color_b := colors$"FALSE"[3]]
+
+if (threshold_col %in% names(cells)) {
+  cells[get(threshold_col) == TRUE, `:=`(
+    color_r = colors$"TRUE"[1],
+    color_g = colors$"TRUE"[2],
+    color_b = colors$"TRUE"[3]
+  )]
+}
+
+cat("Transformation applied to", nrow(cells), "cells\n")
+cat("Cells above threshold:", sum(cells[[threshold_col]], na.rm = TRUE), "\n")
+
+if (nrow(cells) == 0) {
+  stop("No cells found for specified well and source")
+}
+
+# Create black background matrix
+img <- array(0, dim = c(image_height_um, image_width_um, 3))
+
+center_x <- round(image_width_um / 2)
+center_y <- round(image_height_um / 2)
+
+# Draw colored points
+cat("Drawing points...\n")
+for (i in 1:nrow(cells)) {
+  x <- cells$x_pixel[i]
+  y <- cells$y_pixel[i]
+  
+  r_val <- cells$color_r[i]
+  g_val <- cells$color_g[i]
+  b_val <- cells$color_b[i]
+  
+  for (dx in -point_size_pixels:point_size_pixels) {
+    for (dy in -point_size_pixels:point_size_pixels) {
+      if (dx^2 + dy^2 <= point_size_pixels^2) {
+        px <- x + dx
+        py <- y + dy
+        if (px >= 1 && px <= image_width_um && py >= 1 && py <= image_height_um) {
+          img[py, px, 1] <- r_val
+          img[py, px, 2] <- g_val
+          img[py, px, 3] <- b_val
+        }
+      }
+    }
+  }
+  
+  if (i %% 100 == 0) cat(".")
+}
+cat("\n")
+
+# Save as BMP
+bmp(filename = output_filename, 
+    width = image_width_um, 
+    height = image_height_um, 
+    units = "px")
+par(mar = c(0,0,0,0))
+plot(0, type = "n", xlim = c(0, image_width_um), ylim = c(0, image_height_um), 
+     xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n", xlab = "", ylab = "", bty = "n")
+rasterImage(img, 0, 0, image_width_um, image_height_um)
+dev.off()
+
+cat("\n=== OVERLAY COMPLETE ===\n")
+cat("File:", output_filename, "\n")
+cat("Color scheme: Red = above threshold, Blue = below threshold\n")
+```
+
+```{r fiji-crop-tool-step1}
+# === USER SETTINGS ===
+well_to_overlay <- "A3"
+source_to_overlay <- "Run 9"
+quadrants_to_extract <- c("D")  # Which quadrants to include
+output_coords_file <- "crop_coordinates-B.csv"
+crop_size <- 30  # Size of crop box
+
+# Filter and transform cells (using your existing transformation code)
+cells <- Object_Table[
+  Well == well_to_overlay & 
+  Source == source_to_overlay &
+  !is.na(`X.Position.(µm)`) &
+  !is.na(`Y.Position.(µm)`)]
+
+# Apply transformations (your existing code)
+affine_x_intercept <- 2853.25
+affine_x_coef_x <- 0.949288
+affine_x_coef_y <- 0.002611
+affine_y_intercept <- 2833.28
+affine_y_coef_x <- 7.9e-05
+affine_y_coef_y <- 0.945319
+radial_center_x <- 2248
+radial_center_y <- 2385
+k1 <- -2.805967e-09
+k2 <- 7.814928e-16
+
+cells[, `:=`(
+  x_temp = affine_x_intercept + affine_x_coef_x * `X.Position.(µm)` + affine_x_coef_y * `Y.Position.(µm)`,
+  y_temp = affine_y_intercept + affine_y_coef_x * `X.Position.(µm)` + affine_y_coef_y * `Y.Position.(µm)`
+)]
+
+cells[, r := sqrt((x_temp - radial_center_x)^2 + (y_temp - radial_center_y)^2)]
+cells[, scale := 1 + k1 * r^2 + k2 * r^4]
+cells[, `:=`(
+  x_pixel = round((x_temp - radial_center_x) * scale + radial_center_x),
+  y_pixel = round((y_temp - radial_center_y) * scale + radial_center_y)
+)]
+
+# Filter for quadrant-positive cells
+cells[, is_target := FALSE]
+for (quad in quadrants_to_extract) {
+  col_name <- paste0("PC.Quadrant.", quad)
+  if (col_name %in% names(cells)) {
+    cells[get(col_name) == TRUE, is_target := TRUE]
+  }
+}
+
+target_cells <- cells[is_target == TRUE]
+
+cat("Total cells:", nrow(cells), "\n")
+cat("Target cells for cropping:", nrow(target_cells), "\n")
+
+# Export coordinates
+coords_export <- target_cells[, .(x_pixel, y_pixel)]
+write.csv(coords_export, output_coords_file, row.names = FALSE)
+
+cat("Coordinates exported to:", output_coords_file, "\n")
+cat("Ready for FIJI macro processing\n")
+```
+
+```{r range}
+range(Object_Table$`X.Position.(µm)`)
+range(Object_Table$`Y.Position.(µm)`)
+```
+
+```{r find_cell}
+find_cell <- function(x, y, well = "A3", source = "Run 7") {
+  center_x <- 2841.5
+  center_y <- 2841.5
+  
+  search_data <- Object_Table[Well == well & Source == source]
+  search_data[, x_pixel := round(`X.Position.(µm)`) + center_x]
+  search_data[, y_pixel := round(`Y.Position.(µm)`) + center_y]
+  search_data[, distance := sqrt((x_pixel - x)^2 + (y_pixel - y)^2)]
+  
+  closest <- search_data[which.min(distance)]
+  return(closest)
+}
+
+# Use it:
+cell <- find_cell(1869, 2674)
+print(t(cell))
+```
+
+```{r Violin-plot-multisource-WIP}
+y_var <- "Area"
+plot_title <- paste0("Distribution of ",  y_var)
+df <- Object_Norm[, .(Condition, y = get(y_var), Source)]
+
+# filter
+df <- df[Condition %in% c("Cells Only", "Cells Only\n+ PMA")]
+
+# Convert Column to factor for plotting
+#df[, Column := factor(Column, levels = c("1", "3", "2", "4", "5"),
+ #                             labels = c("No Stain", "Cells Only", "+ PMA", "Polyester Colors\nHeat Killed", "Polyester Colors\n+ UV"))]
+
+# === 3. Generate colors for DATASET (not Column) ===
+unique_datasets <- unique(df$Source)
+
+# Define manual colors for datasets if desired
+dataset_colors <- c(
+  "Experiment 1" = "lightblue",
+  "Experiment 2" = "lightcoral"
+)
+
+# Get predefined colors
+active_dataset_colors <- dataset_colors[names(dataset_colors) %in% unique_datasets]
+
+# Auto-generate for missing datasets
+missing_datasets <- setdiff(unique_datasets, names(dataset_colors))
+if (length(missing_datasets) > 0) {
+  cat("Generating colors for datasets:", paste(missing_datasets, collapse = ", "), "\n")
+  new_colors <- brewer.pal(max(3, length(missing_datasets)), "Set1")[1:length(missing_datasets)]
+  names(new_colors) <- missing_datasets
+  active_dataset_colors <- c(active_dataset_colors, new_colors)
+}
+
+# Ensure colors are in same order as unique_datasets
+active_dataset_colors <- active_dataset_colors[as.character(unique_datasets)]
+
+# Basic violin plot
+p <- ggplot(df, aes(x = Condition, y = y, fill = Source)) +
+  geom_violin(trim = FALSE, alpha = 0.6, scale = "width") +
+  stat_summary(fun = median, geom = "point", size = 1.5, color = "black",
+               position = position_dodge(width = 0.9)) +
+  scale_fill_manual(values = active_dataset_colors) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    x = "Condition",
+    y = y_var,
+    fill = "Source",
+    title = plot_title
+  )
+
+ggsave("violin-normArea-run10.png", plot = p, width = 8, height = 6)
+
+print(p)
+```
+
+```{r Violin-plot-2conditions-BEST}
+## -----------------------------
+## User options
+## -----------------------------
+use_scatter_gate <- FALSE
+use_PC_gate      <- FALSE
+source_to_use    <- "Run 10"
+
+## -----------------------------
+## Start from Object_Table or Object_Norm 
+## -----------------------------
+tdf <- copy(Object_Norm)
+
+## Filter by Source
+tdf <- tdf[Source == source_to_use]
+
+## Apply gates cumulatively
+if (use_PC_gate) {
+  tdf <- tdf[Gated_PC == TRUE]
+}
+
+if (use_scatter_gate) {
+  tdf <- tdf[Scatter.Gate == TRUE]
+}
+
+## -----------------------------
+## Define measures and conditions
+## -----------------------------
+measures <- c(
+  #"Area",
+  #"Form.Factor",
+  #"Smoothness",
+  #"Aspect.Ratio"
+  "Bright.Field.Mean.Intensity", 
+  "Bright.Field.Integrated.Intensity",
+  "DAPI.Mean.Intensity",
+  "DAPI.Integrated.Intensity",
+  "MPO.Mean.Intensity",
+  "MPO.Integrated.Intensity"
+)
+
+conditions_to_plot <- c("Cells Only", "Cells Only + PMA")
+
+## -----------------------------
+## Filter and prepare data
+## -----------------------------
+df <- tdf[Condition %in% conditions_to_plot]
+
+## Convert Condition to factor with clean labels
+df[, Condition := factor(
+  Condition,
+  levels = c("Cells Only", "Cells Only + PMA"),
+  labels = c("- PMA", "+ PMA")
+)]
+
+## -----------------------------
+## Reshape to long format
+## -----------------------------
+df_long <- melt(
+  df,
+  id.vars = "Condition",
+  measure.vars = measures,
+  variable.name = "Measure",
+  value.name = "Value"
+)
+
+df_long[, Measure := factor(
+  Measure,
+  levels = measures,
+  labels = gsub("\\.", " ", measures)
+)]
+
+
+## -----------------------------
+## Plot settings
+## -----------------------------
+condition_colors <- c(
+  "- PMA" = "royalblue",
+  "+ PMA" = "goldenrod"
+)
+
+plot_title <- paste(
+  "Distribution of Measures by Condition",
+  paste("MPO Mask", source_to_use),
+  sep = "\n"
+)
+
+## -----------------------------
+## Violin plot
+## -----------------------------
+p <- ggplot(df_long, aes(x = Measure, y = Value, fill = Condition)) +
+  geom_violin(
+    trim = FALSE,
+    alpha = 0.6,
+    scale = "width",
+    position = position_dodge(width = 0.92)
+  ) +
+  stat_summary(
+    fun = median,
+    geom = "point",
+    size = 1.5,
+    color = "black",
+    position = position_dodge(width = 0.9)
+  ) +
+  scale_fill_manual(values = condition_colors) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 18),
+    axis.title.y = element_text(size = 16),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 20),
+     legend.position = "top",
+    plot.title   = element_blank()
+  ) +
+  labs(
+    x = "",
+    y = "",
+    fill = "Condition",
+    title = plot_title
+  )
+
+## -----------------------------
+## Save + display
+## -----------------------------
+ggsave(
+  filename = paste0("violin-Zmeas3", gsub(" ", "_", source_to_use), ".png"),
+  plot = p,
+  width = 10,
+  height = 6
+)
+
+print(p)
+
+```
+
+```{r Violin-plot-2conditions-with-sources}
+use_scatter_gate <- FALSE 
+use_PC_gate <- FALSE
+runs_to_plot <- c("Run 10")
+
+tdf <- Object_Table[Source %in% runs_to_plot]
+
+if (use_PC_gate) {
+  tdf <- tdf[Gated_PC == TRUE]
+}
+
+if (use_scatter_gate) {
+  tdf <- tdf[in_gate == TRUE]
+}
+
+# Define measures and conditions
+measures <- c("Area", "Form.Factor", "Smoothness", "Aspect.Ratio", "DAPI.Mean.Intensity", "DAPI.Integrated.Intensity", "MPO.Mean.Intensity")
+conditions_to_plot <- c("Cells Only", "Cells Only\n+ PMA\n4 Hours")  # "Cells Only" And "+ PMA" 
+
+# Filter and prepare data
+df <- tdf[Condition %in% conditions_to_plot]
+
+# Convert Column to factor with labels
+df[, Condition := factor(Condition, levels = c("Cells Only", "Cells Only\n+ PMA\n4 Hours"),
+                      labels = c("Cells Only", "+ PMA"))]
+
+# Reshape data from wide to long format
+df_long <- melt(df, 
+                id.vars = c("Condition"),
+                measure.vars = measures,
+                variable.name = "Measure",
+                value.name = "Value")
+
+# Create cleaner measure labels
+df_long[, Measure := factor(Measure, 
+                            levels = measures
+                            )]
+
+# Scale it
+df_long[, Value := Value / max(Value, na.rm = TRUE), by = Measure]
+
+# Define colors for conditions (not datasets)
+condition_colors <- c(
+  "Cells Only" = "aquamarine3",
+  "+ PMA" = "orangered2"
+)
+
+plot_title <- "Distribution of Measures by Condition"
+
+# Create violin plot
+p <- ggplot(df_long, aes(x = Measure, y = Value, fill = Condition)) +
+  geom_violin(trim = FALSE, alpha = 0.6, scale = "width", position = position_dodge(width = 0.92)) +
+  stat_summary(fun = median, geom = "point", size = 1.5, color = "black",
+               position = position_dodge(width = 0.9)) +
+  scale_fill_manual(values = condition_colors) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    x = "",
+    y = "Value",
+    fill = "Condition",
+    title = plot_title
+  )
+
+ggsave("violin-plot-run10.png", plot = p, width = 10, height = 6)
+print(p)
+```
+
+```{r Obj-lvl-histogram}
+p <- ggplot(Object_Table[Condition %in% c("Cells Only No Stain + PMA","Cells Only + PMA","Cells Only") & Source == "Run 9"],
+       aes(x = CitH3.Integrated.Intensity, fill = Condition)) +
+  geom_histogram(alpha = 0.4,
+                 position = "identity",
+                 bins = 100) +
+  scale_fill_manual(values = c("Cells Only No Stain + PMA"="red", "Cells Only + PMA"="blue", "Cells Only"="green")) +
+  scale_x_log10() +
+  labs(x = "CitH3 Integrated Intensity (log10)") +
+  theme_minimal()
+
+ggsave("Run9_histo-CitH3.Intgr.I-1.png", plot = p, width = 7, height = 4)
+plot(p)
+
+```
+
+```{r Obj-lvl-proportion-histo}
+p <- ggplot(Object_Table[Column %in% c(1,2, 3)],
+       aes(x = Area, fill = factor(Column))) +
+  geom_histogram(aes(y = after_stat(count / sum(count)),
+                   group = factor(Column),
+                   fill = factor(Column)),
+               alpha = 0.4,
+               position = "identity",
+               bins = 100) +
+  scale_fill_manual(values = c("1"="red", "2" = "blue", "3" = "green")) +
+  ylab("Proportion") +
+  theme_minimal()
+ggsave("histo-test2.png", plot = p, width = 4, height = 4)
+plot(p)
+
+```
+
+```{r diff-density-rd2}
+library(terra)
+
+# A_pts and B_pts are SpatVector
+# r is the SpatRaster grid
+#r <- rast(A_pts, resolution = c(5,5))   
+r <- rast(ext(A_pts), nrows = 1750, ncols = 1750)           #These control how many pixels the density maps have.
+
+
+rA <- rasterize(A_pts, r, field = 1, fun = "sum", background = 0)
+rB <- rasterize(B_pts, r, field = 1, fun = "sum", background = 0)
+
+# radius controls smoothing (acts like point size)
+radius <- 11      # try 10–40 this controls how wide the density blur is (like point size).
+sigma  <- radius / 3
+
+# Create gaussian kernel
+x <- -radius:radius
+k <- exp(-(x^2)/(2*sigma^2))
+kernel <- outer(k, k)
+kernel <- kernel / sum(kernel)    # normalize
+
+A_den <- focal(rA, w = kernel, fun = "sum", na.policy = "omit", filename = "")
+B_den <- focal(rB, w = kernel, fun = "sum", na.policy = "omit", filename = "")
+
+# Normalize B to 0–1 for thresholding
+B_max <- global(B_den, "max", na.rm = TRUE)[[1]]
+B_norm <- B_den / B_max
+
+# Threshold: areas with density > t will mask A
+t <- 0.06    # adjust for stronger/weaker masking, this controls how aggressively B punches holes in A, higher number is weaker 0-1
+
+mask_inv <- B_norm < t   # TRUE = keep A, FALSE = hole
+mask_inv <- mask_inv * 1 # convert to numeric 0/1
+
+A_masked <- A_den * mask_inv
+
+A_df_r <- as.data.frame(A_masked, xy = TRUE)
+colnames(A_df_r) <- c("x", "y", "A")
+
+B_df_r <- as.data.frame(B_den, xy = TRUE)
+colnames(B_df_r) <- c("x", "y", "B")
+
+p <- ggplot() +
+  geom_raster(data = A_df_r, aes(x = x, y = y, fill = A)) +
+  scale_fill_viridis_c(option = "D", na.value = NA) +
+
+  geom_raster(data = B_df_r, aes(x = x, y = y, alpha = B), fill = "green") +
+  scale_alpha(range = c(0, 0.5)) +                 #This controls how transparent B appears in the final image.
+
+  coord_fixed() +
+  theme_minimal()
+print(p)
+ggsave("density-difference-v2.png", width = 10, height = 10, dpi = 300)
+```
+
+```{r detach terra}
+detach("package:terra", unload = TRUE, character.only = TRUE)
+search()
+```
+
+```{r Obj-lvl-pairwise}
+# --- 1. Prepare a clean copy of the data ---
+dt_plot <- copy(Object_Table)
+
+# Keep only the conditions you want
+dt_plot <- dt_plot[Condition %in% c(
+                                    "Cells Only", 
+                                    "Cells Only\n+ PMA"
+                                    )]
+
+# Keep only source desired
+dt_plot <- dt_plot[Source %in% c(
+                                  "Run 9"
+                                    )]
+
+dt_plot <- dt_plot %>%
+          mutate(color_group = if_else(Thresholded_PC1, "PCA_Threshold", Condition))
+
+# Ensure Condition is a factor for coloring
+dt_plot[, Condition := factor(Condition)]
+
+# Ensure numeric columns are numeric
+num_cols <- c("Area", "Form.Factor", "Smoothness", "Aspect.Ratio", "DAPI.Mean.Intensity", "MPO.Mean.Intensity")
+dt_plot[, (num_cols) := lapply(.SD, as.numeric), .SDcols = num_cols]
+
+# --- 2. Define plotting functions ---
+
+# Diagonal: overlaid proportion histograms
+diag_hist <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_histogram(aes(y = after_stat(count / sum(count))),
+                   alpha = 0.3, position = "identity", bins = 50, color = NA) +
+    scale_fill_manual(values = c("PCA_Threshold" = "green", "Cells Only" = "black", "Cells Only\n+ PMA" = "blue")) +
+    theme_minimal() +
+    ylab("Proportion")
+}
+
+# Off-diagonal: scatterplots, colored by condition
+scatter_col <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_point(alpha = 0.3, size = 0.1) +
+    scale_color_manual(values = c("PCA_Threshold" = "green", "Cells Only" = "black", "Cells Only\n+ PMA" = "blue")) +
+    theme_minimal()
+}
+
+# --- 3. Make the pairwise plot ---
+p <- ggpairs(dt_plot,
+             columns = num_cols,
+             mapping = aes(color = Condition, fill = Condition),
+             upper = list(continuous = scatter_col),
+             lower = list(continuous = scatter_col),
+             diag = list(continuous = diag_hist))
+
+# --- Add theme for font sizes ---
+p <- p + theme(
+  # Axis titles (variable names on edges)
+  axis.title = element_text(size = 16),
+  
+  # Axis tick labels (numbers)
+  axis.text = element_text(size = 14),
+  
+  # Strip text (variable labels at top/side)
+  strip.text = element_text(size = 16, face = "bold"),
+  
+  # Legend text
+  legend.text = element_text(size = 14),
+  legend.title = element_text(size = 16)
+)
+
+# --- 4. Save and display ---
+ggsave("pairwise-scatterplot4.png", plot = p, width = 16, height = 16)
+#print(p)
+
+```
+
+```{r Obj-lvl-pairwise-v3-gates}
+# --- 1. Specify source to plot ---
+source_to_plot <- "Run 10"  # Change this
+
+# --- 2. Prepare data ---
+dt_plot <- Object_Table[Source == source_to_plot & 
+                        Condition %in% c("Cells Only", "Cells Only + PMA") &
+                        !is.na(Gated_PC)]
+
+# Create labels and groups
+dt_plot[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+dt_plot[, Group := interaction(Condition_Label, 
+                               ifelse(Gated_PC, "Gated", "Ungated"),
+                               sep = " ")]
+
+# Ensure numeric columns
+num_cols <- c("Area", "Form.Factor", "Smoothness", "Aspect.Ratio", 
+                     "Bright.Field.Integrated.Intensity", "DAPI.Integrated.Intensity", "MPO.Integrated.Intensity")
+dt_plot[, (num_cols) := lapply(.SD, as.numeric), .SDcols = num_cols]
+
+# --- 3. Define colors ---
+group_colors <- c(
+  "- PMA Ungated" = "#1f78b4",   
+  "- PMA Gated"   = "#081d58",   
+  "+ PMA Ungated" = "#ff7f00",   
+  "+ PMA Gated"   = "red"    
+)
+ 
+# --- 4. Define plotting functions ---
+# Diagonal: density plots
+diag_density <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_density(aes(fill = Group), alpha = 0.5, size = 2) +  # thicker line + fill
+    scale_fill_manual(values = group_colors) +
+    theme_minimal()
+}
+
+# Lower: scatterplots
+scatter_col <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_point(aes(color = Group), alpha = 0.2, size = 0.5) +  # small, semi-transparent points
+    scale_color_manual(values = group_colors) +
+    theme_minimal()
+}
+
+# Upper: correlation text
+cor_fun <- function(data, mapping, ...) {
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  
+  corr <- cor(x, y, use = "complete.obs")
+  
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, 
+             label = paste0("r = ", round(corr, 2)),
+             size = 9) +
+    theme_void()
+}
+
+# --- 5. Create pairwise plot ---
+p <- ggpairs(dt_plot,
+             columns = num_cols,
+             mapping = aes(color = Group, fill = Group),
+             upper = list(continuous = cor_fun),
+             lower = list(continuous = scatter_col),
+             diag = list(continuous = diag_density),
+             legend = 1)
+
+# --- 6. Apply theme ---
+p <- p + theme(
+  axis.title = element_text(size = 20),
+  axis.text = element_text(size = 16),
+  strip.text = element_text(size = 18, face = "bold"),
+  legend.text = element_text(size = 16),
+  legend.title = element_blank(),
+  legend.key.size = unit(2, "lines")   # bigger legend samples
+)
+
+# --- 7. Save and display ---
+ggsave(paste0("pairwise-scatterplot_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 22, height = 20 )
+print(p)
+```
+
+```{r Obj-lvl-pairwise-density-v3-gates}
+# --- 1. Specify source to plot ---
+source_to_plot <- "Run 10"  # Change this
+
+# --- 2. Prepare data ---
+dt_plot <- Object_Table[Source == source_to_plot & 
+                        Condition %in% c("Cells Only", "Cells Only + PMA") &
+                        !is.na(Gated_PC)]
+
+# Create labels and groups
+dt_plot[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+dt_plot[, Group := interaction(Condition_Label, 
+                               ifelse(Gated_PC, "Gated", "Ungated"),
+                               sep = " ")]
+
+# Ensure numeric columns
+num_cols <- c("Area", "Form.Factor", "Smoothness", "Aspect.Ratio", 
+                     "Bright.Field.Mean.Intensity", "Bright.Field.Integrated.Intensity", "DAPI.Mean.Intensity", "DAPI.Integrated.Intensity", "MPO.Mean.Intensity", "MPO.Integrated.Intensity")
+dt_plot[, (num_cols) := lapply(.SD, as.numeric), .SDcols = num_cols]
+
+# --- 3. Define colors ---
+group_colors <- c(
+  "- PMA Ungated" = "#1f78b4",   
+  "- PMA Gated"   = "#081d58",   
+  "+ PMA Ungated" = "#ff7f00",   
+  "+ PMA Gated"   = "red"    
+)
+ 
+# --- 4. Define plotting functions ---
+# Diagonal: density plots
+diag_density <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_density(aes(fill = Group), alpha = 0.5, size = 2) +  # thicker line + fill
+    scale_fill_manual(values = group_colors) +
+    theme_minimal()
+}
+
+# Lower: density plots
+scatter_col <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    stat_density_2d(linewidth = 0.6) +
+    scale_color_manual(values = group_colors) +
+    theme_minimal()
+}
+
+# Upper: correlation text
+cor_fun <- function(data, mapping, ...) {
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  
+  corr <- cor(x, y, use = "complete.obs")
+  
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, 
+             label = paste0("r = ", round(corr, 2)),
+             size = 9) +
+    theme_void()
+}
+
+# --- 5. Create pairwise plot ---
+p <- ggpairs(dt_plot,
+             columns = num_cols,
+             mapping = aes(color = Group, fill = Group),
+             upper = list(continuous = cor_fun),
+             lower = list(continuous = scatter_col),
+             diag = list(continuous = diag_density),
+             legend = 1)
+
+# --- 6. Apply theme ---
+p <- p + theme(
+  axis.title = element_text(size = 20),
+  axis.text = element_text(size = 16),
+  strip.text = element_text(size = 18, face = "bold"),
+  legend.text = element_text(size = 16),
+  legend.title = element_blank(),
+  legend.key.size = unit(2, "lines")   # bigger legend samples
+)
+
+# --- 7. Save and display ---
+ggsave(paste0("pairwise-big-densityplot2_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 22, height = 20 )
+#print(p)
+```
+
+```{r Obj-lvl-pairwise-density-v4-threshold}
+# --- 1. Specify source to plot ---
+source_to_plot <- "Run 10"  # Change this
+
+# --- 2. Prepare data ---
+dt_plot <- Object_Table[Source == source_to_plot & 
+                        Condition %in% c("Cells Only", "Cells Only + PMA") &
+                        !is.na(`10-Fold.Thresholded.CitH3.Mean.Intensity`)]
+
+# Create labels and groups
+dt_plot[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+dt_plot[, Group := interaction(Condition_Label, 
+                               ifelse(`10-Fold.Thresholded.CitH3.Mean.Intensity`, "Thresholded", "Unthresholded"),
+                               sep = " ")]
+
+
+# Ensure numeric columns
+num_cols <- c("Area", "Form.Factor", "Smoothness", "Aspect.Ratio", 
+                     "Bright.Field.Mean.Intensity", "Bright.Field.Integrated.Intensity", "DAPI.Mean.Intensity", "DAPI.Integrated.Intensity", "MPO.Mean.Intensity", "MPO.Integrated.Intensity")
+dt_plot[, (num_cols) := lapply(.SD, as.numeric), .SDcols = num_cols]
+
+# --- 3. Define colors ---
+group_colors <- c(
+  "- PMA Unthresholded" = "#1f78b4",   
+  "- PMA Thresholded"   = "#081d58",   
+  "+ PMA Unthresholded" = "#ff7f00",   
+  "+ PMA Thresholded"   = "red"    
+)
+
+dt_plot[, Group := factor(Group, levels = names(group_colors))] 
+
+# --- 4. Define plotting functions ---
+# Diagonal: density plots
+diag_density <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_density(aes(fill = Group), alpha = 0.5, size = 2) +  # thicker line + fill
+    scale_fill_manual(values = group_colors) +
+    theme_minimal()
+}
+
+# Lower: density plots
+scatter_col <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    stat_density_2d(linewidth = 0.6) +
+    scale_color_manual(values = group_colors) +
+    theme_minimal()
+}
+
+# Upper: correlation text
+cor_fun <- function(data, mapping, ...) {
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  
+  corr <- cor(x, y, use = "complete.obs")
+  
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, 
+             label = paste0("r = ", round(corr, 2)),
+             size = 9) +
+    theme_void()
+}
+
+# --- 5. Create pairwise plot ---
+p <- ggpairs(dt_plot,
+             columns = num_cols,
+             mapping = aes(color = Group, fill = Group),
+             upper = list(continuous = cor_fun),
+             lower = list(continuous = scatter_col),
+             diag = list(continuous = diag_density),
+             legend = 1)
+
+# --- 6. Apply theme ---
+p <- p + theme(
+  axis.title = element_text(size = 20),
+  axis.text = element_text(size = 16),
+  strip.text = element_text(size = 18, face = "bold"),
+  legend.text = element_text(size = 16),
+  legend.title = element_blank(),
+  legend.key.size = unit(2, "lines")   # bigger legend samples
+)
+
+# --- 7. Save and display ---
+ggsave(paste0("pairwise-big-densityplot2_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 22, height = 20 )
+#print(p)
+```
+
+```{r Obj-lvl-pairwise-density-v5-threshold}
+# --- 1. Specify source to plot ---
+source_to_plot <- "Run 10"
+
+# --- 2. Prepare data ---
+dt_plot <- Object_Table[Source == source_to_plot & 
+                        Condition %in% c("Cells Only", "Cells Only + PMA") &
+                        !is.na(`10-Fold.Thresholded.CitH3.Mean.Intensity`)]
+
+# Create labels
+dt_plot[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+
+# Get thresholded cells subset
+dt_threshold <- dt_plot[`10-Fold.Thresholded.CitH3.Mean.Intensity` == TRUE]
+
+# Ensure numeric columns
+num_cols <- c("Area", "Form.Factor", "Smoothness", "Aspect.Ratio", 
+              #"Bright.Field.Mean.Intensity", "Bright.Field.Integrated.Intensity", 
+              #"DAPI.Mean.Intensity", "DAPI.Integrated.Intensity", 
+              "MPO.Mean.Intensity", "MPO.Integrated.Intensity",
+              "CitH3.Mean.Intensity", "CitH3.Integrated.Intensity")
+dt_plot[, (num_cols) := lapply(.SD, as.numeric), .SDcols = num_cols]
+
+# --- 3. Define colors ---
+condition_colors <- c("- PMA" = "royalblue", "+ PMA" = "goldenrod")
+
+# --- 4. Define plotting functions ---
+# Diagonal: density plots
+diag_density <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_density(aes(color = Condition_Label), linewidth = 0.8, alpha = 0.5) +
+    scale_color_manual(values = condition_colors) +
+    theme_minimal()
+}
+
+# Lower: scatter with threshold density overlay
+scatter_col <- function(data, mapping, ...) {
+  # Get the column names from mapping
+  x_col <- as.character(mapping$x)[2]
+  y_col <- as.character(mapping$y)[2]
+  
+  ggplot(data = data, mapping = mapping) +
+    stat_density_2d(aes(color = Condition_Label), linewidth = 0.6) +
+    stat_density_2d(data = dt_threshold, 
+                    aes(x = .data[[x_col]], y = .data[[y_col]]),
+                    color = "red", 
+                    linewidth = 1.0, 
+                    alpha = 0.8,
+                    bins = 5,
+                    inherit.aes = FALSE) +
+    scale_color_manual(values = condition_colors) +
+    theme_minimal()
+}
+
+# Upper: correlation text
+cor_fun <- function(data, mapping, ...) {
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  
+  corr <- cor(x, y, use = "complete.obs")
+  
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, 
+             label = paste0("r = ", round(corr, 2)),
+             size = 9) +
+    theme_void()
+}
+
+# --- 5. Create pairwise plot ---
+p <- ggpairs(dt_plot,
+             columns = num_cols,
+             mapping = aes(color = Condition_Label),
+             upper = list(continuous = cor_fun),
+             lower = list(continuous = scatter_col),
+             diag = list(continuous = diag_density),
+             legend = 1)
+
+# --- 6. Apply theme ---
+p <- p + theme(
+  axis.title = element_text(size = 20),
+  axis.text = element_text(size = 16),
+  strip.text = element_text(size = 18, face = "bold"),
+  legend.text = element_text(size = 16),
+  legend.title = element_blank(),
+  legend.key.size = unit(2, "lines")
+)
+
+# --- 7. Save and display ---
+ggsave(paste0("pairwise-densityplot_threshold_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 22, height = 20)
+#print(p)
+```
+
+```{r Obj-lvl-pairwise-density-no-bells}
+# --- 1. Specify source to plot ---
+source_to_plot <- "Run 10"
+
+# --- 2. Prepare data ---
+dt_plot <- Object_Table[Source == source_to_plot & 
+                        Condition %in% c("Cells Only", "Cells Only + PMA") &
+                        !is.na(`10-Fold.Thresholded.CitH3.Mean.Intensity`)]
+
+# Create labels
+dt_plot[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+
+# Ensure numeric columns
+num_cols <- c("Area", "Form.Factor", "Smoothness", "Aspect.Ratio", 
+              "MPO.Mean.Intensity", "MPO.Integrated.Intensity",
+              "CitH3.Mean.Intensity", "CitH3.Integrated.Intensity")
+dt_plot[, (num_cols) := lapply(.SD, as.numeric), .SDcols = num_cols]
+
+# --- 3. Define colors ---
+condition_colors <- c("- PMA" = "royalblue", "+ PMA" = "goldenrod")
+
+# --- 4. Define plotting functions ---
+# Diagonal: density plots
+diag_density <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_density(aes(color = Condition_Label), linewidth = 0.8, alpha = 0.5) +
+    scale_color_manual(values = condition_colors) +
+    theme_minimal()
+}
+
+# Lower: scatter WITHOUT threshold density overlay
+scatter_col <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    stat_density_2d(aes(color = Condition_Label), linewidth = 0.6) +
+    scale_color_manual(values = condition_colors) +
+    theme_minimal()
+}
+
+# Upper: correlation text
+cor_fun <- function(data, mapping, ...) {
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  
+  corr <- cor(x, y, use = "complete.obs")
+  
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, 
+             label = paste0("r = ", round(corr, 2)),
+             size = 9) +
+    theme_void()
+}
+
+# --- 5. Create pairwise plot ---
+p <- ggpairs(dt_plot,
+             columns = num_cols,
+             mapping = aes(color = Condition_Label),
+             upper = list(continuous = cor_fun),
+             lower = list(continuous = scatter_col),
+             diag = list(continuous = diag_density),
+             legend = 1)
+
+# --- 6. Apply theme ---
+p <- p + theme(
+  axis.title = element_text(size = 20),
+  axis.text = element_text(size = 16),
+  strip.text = element_text(size = 18, face = "bold"),
+  legend.text = element_text(size = 16),
+  legend.title = element_blank(),
+  legend.key.size = unit(2, "lines")
+)
+
+# --- 7. Save and display ---
+ggsave(paste0("pairwise-densityplot_", gsub(" ", "", source_to_plot), ".png"), 
+       plot = p, width = 22, height = 20)
+print(p)
+```
+
+
+```{r simple-densityplot-function}
+plot_density_with_threshold <- function(
+  dt,
+  x_var,
+  y_var,
+  source_to_plot
+  #threshold_col = "10-Fold.Thresholded.CitH3.Mean.Intensity"
+  #condition_colors = c("- PMA" = "royalblue", "+ PMA" = "goldenrod")
+) {
+  
+  # Subset data
+  dt_plot <- dt[
+    Source == source_to_plot &
+      Condition %in% c("Cells Only", "Cells Only + PMA") &
+      !is.na(get(x_var)) & !is.na(get(y_var))
+  ]
+  
+  # Condition labels
+  dt_plot[, Condition_Label := ifelse(Condition == "Cells Only", "- PMA", "+ PMA")]
+  
+  # Thresholded subset
+  #dt_threshold <- dt_plot[get(threshold_col) == TRUE]
+  
+  # Plot
+  ggplot(dt_plot, aes(x = get(x_var), y = get(y_var))) +
+    
+    # Condition-colored density contours
+    stat_density_2d(aes(color = Condition_Label),
+                    linewidth = 0.6) +
+    
+    # Red density contours for thresholded cells
+    #stat_density_2d(data = dt_threshold, aes(x = get(x_var), y = get(y_var), color = "Thresholded"), linewidth = 1, bins = 5, inherit.aes = FALSE) +
+    
+   scale_color_manual(
+  breaks = c("- PMA", "+ PMA", "Thresholded"),
+  values = c(
+    #"Thresholded" = "red",
+    "- PMA" = "royalblue",
+    "+ PMA" = "goldenrod"
+    
+  )
+) +
+    
+    theme_minimal() +
+    theme(
+      axis.title = element_text(size = 14),
+      axis.text = element_text(size = 12),
+      legend.title = element_blank(),
+      legend.text = element_text(size = 12)
+    ) +
+    
+    labs(
+      title = paste0(
+        gsub("\\.", " ", x_var), " vs ",
+        gsub("\\.", " ", y_var), " — ",
+        source_to_plot
+      ),
+      x = gsub("\\.", " ", x_var),
+      y = gsub("\\.", " ", y_var)
+    )
+}
+
+```
+
+```{r simple-density-plot}
+x_v <- "MPO.Mean.Intensity"
+y_v <- "CitH3.Mean.Intensity"
+s_t_p <- "Run 10"
+
+
+p <- plot_density_with_threshold(
+  dt = Object_Table,
+  x_var = x_v,
+  y_var = y_v,
+  source_to_plot = s_t_p
+)
+
+print(p)
+ggsave(paste0("densityplot_", x_v, y_v, gsub(" ", "", s_t_p), ".png"), 
+       plot = p, width = 8, height = 7)
+```
+

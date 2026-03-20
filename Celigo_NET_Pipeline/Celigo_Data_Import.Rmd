@@ -11,27 +11,257 @@ library(rstudioapi)
 ```
 
 ```{r Object-Level-Import}
+# === This is the generic 1st step in the import pipeline ===
 
-mask_input <- showPrompt(title = "Organizing Data:", message = "Enter Mask Type")
+# Specify how many runs will be included
+runs_included = 3
+
+# Read multiple files and then name them for graph legend etc
+read_multiple_files <- function(n_files = runs_included) {
+  Temp_List <- list()
+  
+    for(i in 1:n_files) {
+    
+    # Log
+    cat("Selecting file", i, "of", n_files, "\n")
+
+mask_input <- showPrompt(title = "Organizing Data:", message = "Enter Mask Type (e.g. MPO, DAPI, etc.)")
 run_input <- showPrompt(title = "Organizing Data:", message = "Enter Source (e.g. Run 3)")
+
+cat("Select Condition map:")
+
+condition_map <- fread(file.choose())
+names(condition_map) 
+
+cat("Select data:")
 
 file_path <- file.choose()
 
 # Read and immediately aggregate
-Object_Table <- fread(file_path, 
+Object_Temp <- fread(file_path, 
                       skip = 17, 
                       header = TRUE,
-                      select = c("Well", "Row", "Column", "Area (µm²)", "Form Factor", "Smoothness", "Aspect Ratio", "DAPI: Mean Intensity", "DAPI: Integrated Intensity", "MPO: Mean Intensity", "MPO: Integrated Intensity", "CitH3: Mean Intensity"))
-
-
-
-setnames(Object_Table, gsub("[ _]", ".", names(Object_Table)))
+                      select = c("Well", "Row", "Column", "X Position (µm)", "Y Position (µm)", "Area (µm²)", "Form Factor", "Smoothness", "Aspect Ratio", "Bright Field: Mean Intensity", "Bright Field: Integrated Intensity", "DAPI: Mean Intensity", "DAPI: Integrated Intensity", "MPO: Mean Intensity", "MPO: Integrated Intensity", "CitH3: Mean Intensity", "CitH3: Integrated Intensity"))
 
 # Add columns preserving the origin of the data
-    Object_Table$Mask <- user_input
-    Object_Table$Source <- run_input
-  
+    Object_Temp$Mask <- mask_input
+    Object_Temp$Source <- run_input
+    
+    Object_Temp[condition_map, `:=`(Condition = i.Condition), 
+                  on = "Well"]
 
+   Temp_List[[i]] <- Object_Temp
+    }
+  
+  # Combine all datasets
+  combined_data <- do.call(rbind, Temp_List)
+  return(combined_data)
+}
+
+     # Create a datasheet out of combined runs
+Object_Table <- read_multiple_files(runs_included)
+  
+Object_Table[, row_id := .I]
+
+setnames(Object_Table, "Area (µm²)", "Area")
+
+setnames(Object_Table, gsub("[ _]", ".", gsub(":", "", names(Object_Table))))
+    
+#Object_Table[, Condition := gsub("\\\\n", "\n", Condition)]
+Object_Table[, Condition := gsub("\\\\n", " ", Condition)]
+#Object_Table[, Condition := gsub("\\s*\\n\\s*", " ", Condition)]
+
+```
+
+```{r Add-New-Data-to-Object-Table}
+# === Robust data import with add/replace functionality ===
+
+cat("=== Starting Data Import ===\n")
+
+# Get user inputs
+mask_input <- showPrompt(title = "Organizing Data:", message = "Enter Mask Type (e.g. MPO, DAPI, etc.)")
+run_input <- showPrompt(title = "Organizing Data:", message = "Enter Source (e.g. Run 9)")
+
+cat("\nMask:", mask_input, "\n")
+cat("Source:", run_input, "\n")
+
+# Load condition map
+cat("\n--- Select Condition Map CSV ---\n")
+condition_map <- fread(file.choose())
+cat("Condition map columns:", names(condition_map), "\n")
+cat("Condition map rows:", nrow(condition_map), "\n")
+
+# Validate condition map
+if (!"Well" %in% names(condition_map) || !"Condition" %in% names(condition_map)) {
+  stop("ERROR: Condition map must have 'Well' and 'Condition' columns")
+}
+
+cat("Unique conditions in map:", paste(unique(condition_map$Condition), collapse = ", "), "\n")
+
+# Load data file
+cat("\n--- Select Data CSV ---\n")
+file_path <- file.choose()
+cat("Reading:", basename(file_path), "\n")
+
+# Read data
+Object_Temp <- fread(file_path, 
+                     skip = 17, 
+                     header = TRUE,
+                     select = c("Well", "Row", "Column", "Area (µm²)", "Form Factor", 
+                               "Smoothness", "Aspect Ratio", "Bright Field: Mean Intensity", 
+                               "Bright Field: Integrated Intensity", "DAPI: Mean Intensity", 
+                               "DAPI: Integrated Intensity", "MPO: Mean Intensity", 
+                               "MPO: Integrated Intensity", "CitH3: Mean Intensity",
+                               "CitH3: Integrated Intensity"))
+
+cat("Rows read:", nrow(Object_Temp), "\n")
+cat("Columns read:", ncol(Object_Temp), "\n")
+
+# Sanity check: do we have data?
+if (nrow(Object_Temp) == 0) {
+  stop("ERROR: No data rows found in file")
+}
+
+# Rename columns to match existing format
+setnames(Object_Temp, "Area (µm²)", "Area")
+setnames(Object_Temp, gsub("[ _]", ".", gsub(":", "", names(Object_Temp))))
+cat("Cleaned column names:", paste(names(Object_Temp), collapse = ", "), "\n")
+
+# Add metadata columns
+Object_Temp$Mask <- mask_input
+Object_Temp$Source <- run_input
+
+# Add Condition from map
+cat("\n--- Mapping Conditions to Wells ---\n")
+Object_Temp[condition_map, Condition := i.Condition, on = "Well"]
+
+# Check for unmapped wells
+unmapped <- Object_Temp[is.na(Condition), unique(Well)]
+if (length(unmapped) > 0) {
+  warning("WARNING: Wells without conditions: ", paste(unmapped, collapse = ", "))
+  cat("Removing", sum(is.na(Object_Temp$Condition)), "rows with unmapped wells\n")
+  Object_Temp <- Object_Temp[!is.na(Condition)]
+}
+
+# Fix escaped newlines in Condition
+Object_Temp[, Condition := gsub("\\\\n", "\n", Condition)]
+cat("Conditions mapped:", paste(unique(Object_Temp$Condition), collapse = ", "), "\n")
+
+# Final sanity check on new data
+cat("\n--- New Data Summary ---\n")
+cat("Rows in new data:", nrow(Object_Temp), "\n")
+cat("Wells:", length(unique(Object_Temp$Well)), "\n")
+cat("Conditions:", length(unique(Object_Temp$Condition)), "\n")
+
+# === Handle existing Object_Table ===
+cat("\n=== Checking for Existing Data ===\n")
+
+if (exists("Object_Table")) {
+  cat("Object_Table EXISTS\n")
+  cat("Current rows:", nrow(Object_Table), "\n")
+  cat("Current sources:", paste(unique(Object_Table$Source), collapse = ", "), "\n")
+  
+  # Check if this Source already exists
+  if (run_input %in% unique(Object_Table$Source)) {
+    cat("\n*** WARNING: Source '", run_input, "' already exists! ***\n", sep = "")
+    cat("Existing rows for this source:", nrow(Object_Table[Source == run_input]), "\n")
+    
+    response <- showPrompt(
+      title = "Source Already Exists",
+      message = paste0("Source '", run_input, "' already exists in Object_Table.\n",
+                      "REPLACE = Remove old data and add new\n",
+                      "CANCEL = Stop import\n\n",
+                      "What would you like to do?"),
+      default = "CANCEL"
+    )
+    
+    if (toupper(response) == "REPLACE") {
+      cat("\n--- REPLACING existing data for Source:", run_input, "---\n")
+      rows_before <- nrow(Object_Table)
+      Object_Table <- Object_Table[Source != run_input]
+      rows_removed <- rows_before - nrow(Object_Table)
+      cat("Removed", rows_removed, "rows\n")
+    } else {
+      stop("Import CANCELLED by user")
+    }
+  } else {
+    cat("Source '", run_input, "' is NEW - will append\n", sep = "")
+  }
+  
+  # Show column differences
+  cat("\n--- Column Compatibility Check ---\n")
+  existing_cols <- names(Object_Table)
+  new_cols <- names(Object_Temp)
+  
+  missing_in_new <- setdiff(existing_cols, new_cols)
+  missing_in_existing <- setdiff(new_cols, existing_cols)
+  
+  if (length(missing_in_new) > 0) {
+    cat("Columns in EXISTING but not in NEW (will be NA for new rows):\n")
+    cat("  ", paste(missing_in_new, collapse = ", "), "\n")
+  }
+  if (length(missing_in_existing) > 0) {
+    cat("Columns in NEW but not in EXISTING (will be NA for old rows):\n")
+    cat("  ", paste(missing_in_existing, collapse = ", "), "\n")
+  }
+  if (length(missing_in_new) == 0 && length(missing_in_existing) == 0) {
+    cat("All columns match!\n")
+  }
+  
+  # Append new data with fill=TRUE to handle missing columns
+  cat("\n--- Appending New Data ---\n")
+  rows_before <- nrow(Object_Table)
+  Object_Table <- rbindlist(list(Object_Table, Object_Temp), fill = TRUE, use.names = TRUE)
+  rows_after <- nrow(Object_Table)
+  cat("Rows added:", rows_after - rows_before, "\n")
+  
+} else {
+  cat("Object_Table DOES NOT EXIST - creating new\n")
+  Object_Table <- copy(Object_Temp)
+}
+
+# Convert to data.frame if it was previously a data.frame
+if (!is.data.table(Object_Table)) {
+  cat("\n--- Converting to data.frame to match previous format ---\n")
+  Object_Table <- as.data.frame(Object_Table)
+}
+
+# Regenerate row_ids for entire table
+cat("\n--- Regenerating row.id ---\n")
+if (is.data.table(Object_Table)) {
+  Object_Table[, row.id := .I]
+} else {
+  Object_Table$row.id <- seq_len(nrow(Object_Table))
+}
+
+Object_Table[, Condition := gsub("\n", " ", Condition)]
+
+# Final summary
+cat("\n=== IMPORT COMPLETE ===\n")
+cat("Total rows:", nrow(Object_Table), "\n")
+cat("Total sources:", length(unique(Object_Table$Source)), "\n")
+cat("Sources:", paste(unique(Object_Table$Source), collapse = ", "), "\n")
+cat("Total conditions:", length(unique(Object_Table$Condition)), "\n")
+
+# Show breakdown by source
+cat("\n--- Rows by Source ---\n")
+if (is.data.table(Object_Table)) {
+  print(Object_Table[, .N, by = Source])
+} else {
+  print(table(Object_Table$Source))
+}
+
+cat("\n--- Rows by Condition ---\n")
+if (is.data.table(Object_Table)) {
+  print(Object_Table[, .N, by = Condition])
+} else {
+  print(table(Object_Table$Condition))
+}
+
+# Cleanup temp object
+rm(Object_Temp)
+cat("\nTemp object cleaned up\n")
+cat("Ready for analysis!\n")
 ```
 
 ```{r Well-Level-Import}
@@ -80,7 +310,7 @@ NET_Data_Combined$DAPI.Index <- as.numeric(NET_Data_Combined$'%DAPI') * as.numer
 setDT(NET_Data_Combined)
 ```
 
-```{r Object-Lvl-Avg-and-Attach}
+```{r Object-Lvl-Avg-and-Attach-from-CSV}
 ## ==============================
 ## == Import just an average ====
 ## == value from object level ===
@@ -120,3 +350,14 @@ NET_Data_Combined <- NET_Data_Combined %>%
   left_join(well_averages %>% select(Well, Source, Avg_Area), by = c("Well", "Source"))
 ```
 
+```{r Object-Level-Avg-and-Attach-from-DataTable}
+# This averages object level data to use in the well level boxplot or platemap
+well_averages <- Object_Table[, .(
+ n_objects = .N,
+  AVG.CitH3.Mean.Intensity = mean(CitH3.Mean.Intensity, na.rm = TRUE)
+), by = .(Well, Source)]
+
+NET_Data_Combined[well_averages, `:=`(
+  Masked.AVG.CitH3.Mean.Intensity = i.AVG.CitH3.Mean.Intensity
+), on = c("Well", "Source")]
+```
