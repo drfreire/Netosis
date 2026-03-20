@@ -1,0 +1,126 @@
+---
+title: "Celigo-Plate-Plots"
+output: html_document
+date: "2026-03-20"
+---
+
+```{r print-platemap-conditions-labelled}
+# After creating a condition platemap .csv with a Well and Condition column, use this to produce an image guide
+library(ggplate)
+
+file_path <- file.choose()
+plate_map <- read.csv(file_path)
+
+# Force the newlines in the .csv to function correctly in the plot
+plate_map$Condition <- gsub("\\\\n", "\n", plate_map$Condition)
+
+p <- plate_plot(
+  data = plate_map,
+  position = Well,
+  value = Condition,
+  plate_size = 96,
+  plate_type = "round",
+    title = "NET Run 13", 
+  label = Condition,
+  show_legend = FALSE,
+  
+  title_size = 11,
+  # label size and scale adjustments will allow conditions to fit in the wells
+  label_size = 1.4,
+  scale = 1.4,
+  
+  # ggplate requires at least as many colours as values
+  colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D", "#B33C47", "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266")
+)
+
+    ggsave("NET_Run13_Platemap.png", plot = p, width = 6, height = 4)
+    
+    plot(p)
+```
+
+```{r platemap-sidelabel}
+NET_Data_Combined <- NET_Data_Combined %>%
+  mutate(Condition = if_else(!Column %in% c(1, 2, 3), gsub("^[^1-9]*", "", Condition), Condition))
+
+p <- plate_plot(
+  data = NET_Data_Combined %>% 
+    filter(Source == "Run 10",
+             #Row != "H",  
+             #Column != "12"
+           ),
+  position = Well,
+  #value =`Condition`,
+  value = Condition,
+  label_size = 1.0,
+  scale = 1.8,
+  plate_size = 96,
+  plate_type = "round",
+  title = "Example Platemap", 
+  title_size = 14,
+  #legend_n_row = 6,
+  colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D", "#B33C47", "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266")
+)
+print(p)
+ggsave("Example-Platemap2.png", plot = p, width = 9, height = 7)
+```
+
+```{r print-heat-map-labelled}
+NET_Data_Combined <- NET_Data_Combined 
+#%>%
+ # mutate(Condition = if_else(!Column %in% c(1, 2, 3), gsub("^[^1-9]*", "", Condition), Condition))
+
+p<-plate_plot(
+  data = NET_Data_Combined %>% 
+    filter(Source == "Run 14"
+             #Row != "H",  
+             #Column != "12"
+           ),
+  title = "Run 14 Heatmap",
+  position = Well,
+  value = CitH3.Index,
+  label = Condition,
+  label_size = 1.3,
+  scale = 1.3,
+  plate_size = 96,
+  plate_type = "round",
+  show_legend = TRUE,
+  
+  #remove_na = FALSE,
+  #na_fill = "black",
+  
+) +
+    labs(fill = "CitH3.Index") 
+
+ggsave("Run14-CitH3-htmp.png", plot = p, width = 6, height = 4 )
+print(p)
+```
+
+```{r print-multiple-platemaps}
+
+all_cols <- colnames(NET_Data)[7:43]
+columns_to_plot <- all_cols[all_cols != "Condition"]
+
+for(col_name in columns_to_plot) {
+  clean_title <- gsub("[^A-Za-z0-9%_ ]", " ", col_name)
+  p <- plate_plot(
+    data = NET_Data,
+    title = paste("Run 8" , clean_title),
+    title_size = 12,
+    position = Well,
+    value = !!sym(col_name),
+    label = Condition,
+    label_size = 1.7,
+    scale = 1.2 ,
+    plate_size = 24,
+    plate_type = "round",
+    show_legend = TRUE
+  ) +
+    labs(fill = "") 
+  
+clean_file <- gsub("[^A-Za-z0-9_ ]", "_", col_name)
+    ggsave(paste0("platemap_", clean_file, ".pdf"), plot = p, width = 6, height = 4)
+  
+  plot(p)
+}
+
+```
