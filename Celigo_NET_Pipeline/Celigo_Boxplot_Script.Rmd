@@ -824,25 +824,17 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, file
 ```{r MAIN SCRIPT}
 # === USER SETTINGS ===
 runs_to_plot <- c(
-                  "Run 6", "Run 7", "Run 10", "Run 14"
+                  "TB Live Dead"
                   )
 conditions_to_plot <- c(
-                        "- PMA",
-                        "+ PMA",
-                        "Polyester\nColors",
-                        "Polyester\nColors\n+ UV",
-                        "Polyester\nColors\n4 Hours",
-                        "Polyester\nColors + UV\n4 Hours",
-                        "Red\nPolyester",
-                        "Red\nPolyester\n+ UV",
-                        "White\nCotton",
-                        "White\nCotton\n+ UV"
+                        "DF 2",
+                        "DF 4"
                         )
                                #Set to c("") to plot all possible conditions
-measure_to_plot <- c("CitH3.Index")
+measure_to_plot <- c("Percent.Live")
 group_by_source <- FALSE 
 normalize <- FALSE
-test_method <- "wilcoxon"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
+test_method <- "none"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
 pairwise_correction <- "none"                    # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
 use_custom_pairs <- TRUE         
 colored_boxes <- FALSE
@@ -850,7 +842,7 @@ use_custom_title <- FALSE
 
 # Save settings
 file_type <- ".png"
-save_width <-13
+save_width <-7
 save_height <- 8
 
 # Bracket settings 
@@ -905,8 +897,8 @@ legend_size <- 12
 
 jitter_width_grouped <- 0.2 
 jitter_width_ungrouped <- 0.8
-point_size <- 3
-point_alpha <- 0.6
+point_size <- 9
+point_alpha <- 0.8
 
 box_outlier_shape <- NA
 legend_position <- "right"
