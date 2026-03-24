@@ -1,0 +1,122 @@
+// MACRO PART 1: Position rectangle and save original with rectangle overlay
+// Run this first to position your crop rectangle and save the original images
+
+// Conversion factor - change this when you know the actual scale
+pixelsPerMicron = 1; // Change this value to your actual conversion
+scaleBarLength = 2000; // Length in micrometers
+
+// Prompt user to select input folder
+inputDir = getDirectory("Select the folder containing images to open as stack");
+if (inputDir == "") {
+    exit("No folder selected. Macro cancelled.");
+}
+
+// Open all images in the selected folder as a stack
+run("Image Sequence...", "open=" + inputDir + " sort");
+
+// Check if we successfully opened images
+if (nImages == 0) {
+    exit("No images were opened from the selected folder.");
+}
+
+// Set up output directory
+dir = "/Users/brett/Documents/Cropped/"; 
+
+// Check if output directory exists, create if not
+if (!File.exists(dir)) {
+    File.makeDirectory(dir);
+    if (!File.exists(dir)) {
+        exit("Could not create output directory: " + dir);
+    }
+}
+
+// Ensure we have an image open
+if (nImages == 0) {
+    exit("No images are open. Please open an image first.");
+}
+
+// Store the original image title
+originalTitle = getTitle();
+print("Working with image: " + originalTitle);
+
+// Set the scale and add scale bar
+run("Set Scale...", "distance=" + pixelsPerMicron + " known=1 pixel=1 unit=um");
+run("Scale Bar...", "width=" + scaleBarLength + " height=50 font=60 color=White background=Black location=[Lower Right] bold overlay");
+print("Added scale bar in micrometers (conversion: " + pixelsPerMicron + " pixels/μm)");
+
+// Clear any existing selections
+run("Select None");
+
+// Create initial rectangle selection
+makeRectangle(0, 0, 723.36, 550);
+waitForUser("Position the crop rectangle, then click OK");
+
+// Verify we still have a selection
+selType = selectionType();
+if (selType == -1) {
+    exit("No selection found. Please make a rectangle selection and try again.");
+}
+
+// Get the rectangle coordinates and save them to a file for the second macro
+getSelectionBounds(x, y, width, height);
+print("Crop coordinates: x=" + x + ", y=" + y + ", width=" + width + ", height=" + height);
+
+// Save coordinates to a text file for the second macro to read
+coordFile = dir + "crop_coordinates.txt";
+File.saveString("x=" + x + "\ny=" + y + "\nwidth=" + width + "\nheight=" + height, coordFile);
+print("Saved coordinates to: " + coordFile);
+
+// Draw the rectangle on all slices 
+numSlices = nSlices;
+print("Drawing rectangle on " + numSlices + " slices");
+
+// Store the selection coordinates since they get lost after drawing
+selX = x;
+selY = y;
+selWidth = width;
+selHeight = height;
+
+// Set line width and color for the rectangle
+lineWidth = 45; // Line thickness in pixels
+run("Line Width...", "line=" + lineWidth);
+setForegroundColor(250, 250, 250); // Bright yellow (R=255, G=255, B=0)
+
+// Calculate expanded rectangle to draw outline on the outside
+halfLine = lineWidth / 2;
+expandedX = selX - halfLine;
+expandedY = selY - halfLine;
+expandedWidth = selWidth + lineWidth;
+expandedHeight = selHeight + lineWidth;
+
+if (numSlices > 1) {
+    // For stacks, loop through all slices and draw on each
+    for (i = 1; i <= numSlices; i++) {
+        setSlice(i);
+        makeRectangle(expandedX, expandedY, expandedWidth, expandedHeight);
+        run("Draw");
+        print("Drew yellow rectangle outline on slice " + i);
+    }
+} else {
+    // For single images
+    makeRectangle(expandedX, expandedY, expandedWidth, expandedHeight);
+    run("Draw");
+    print("Drew yellow rectangle outline on single image");
+}
+
+// Clear selection after drawing
+run("Select None");
+
+// Flatten the image to burn in the scale bar
+run("Flatten");
+flattenedTitle = getTitle();
+print("Flattened image with scale bar: " + flattenedTitle);
+
+// Save the flattened image with rectangle drawn
+saveAs("TIFF", dir + "original_with_crop_rectangle.tif");
+print("Saved original image with rectangle overlay and scale bar");
+
+print("PART 1 COMPLETE!");
+print("Your original image with rectangle overlay and scale bar has been saved.");
+print("The rectangle coordinates have been saved for Part 2.");
+print("You can now run Part 2 to crop and save individual slices.");
+print("NOTE: Keep this image window open for Part 2, or reopen the original image.");

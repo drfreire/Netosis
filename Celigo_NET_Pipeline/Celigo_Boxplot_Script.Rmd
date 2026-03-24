@@ -25,7 +25,7 @@ library(RColorBrewer)
 
 ```{r DATA IMPORT}
 # Specify how many runs will be included for analysis
-runs_included = 4
+runs_included = 1
 
 # Read multiple files and name them for graph legends etc.
 read_multiple_files <- function(n_files = runs_included) {
@@ -824,17 +824,15 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, file
 ```{r MAIN SCRIPT}
 # === USER SETTINGS ===
 runs_to_plot <- c(
-                  "TB Live Dead"
+                  "Run 15"
                   )
-conditions_to_plot <- c(
-                        "DF 2",
-                        "DF 4"
+conditions_to_plot <- c(""
                         )
                                #Set to c("") to plot all possible conditions
-measure_to_plot <- c("Percent.Live")
+measure_to_plot <- c("%MPO")
 group_by_source <- FALSE 
 normalize <- FALSE
-test_method <- "none"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
+test_method <- "wilcoxon"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
 pairwise_correction <- "none"                    # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
 use_custom_pairs <- TRUE         
 colored_boxes <- FALSE
@@ -842,7 +840,7 @@ use_custom_title <- FALSE
 
 # Save settings
 file_type <- ".png"
-save_width <-7
+save_width <-16
 save_height <- 8
 
 # Bracket settings 
@@ -859,15 +857,11 @@ bracket_settings <- list(
 # Custom comparison pairs (used if use_custom_pairs = TRUE)
 custom_pairs_list <- list(
   c("- PMA", "+ PMA"),
-  c("- PMA", "Polyester\nColors"),
-  c("- PMA", "Polyester\nColors + UV"),
-  c("- PMA", "Polyester\nColors\n4 Hours"),
-  c("- PMA", "Polyester\nColors + UV\n4 Hours"),
+  c("- PMA", "Blue\nPolyester"),
   c("- PMA", "Red\nPolyester"),
-  c("- PMA", "Red\nPolyester\n+ UV"),
+  c("- PMA", "Virgin\nPolyester"),
   c("- PMA", "White\nCotton"),
-  c("- PMA", "White\nCotton\n+ UV")
-  #c("- PMA", "Leachate\n12.5µL"),
+  c("- PMA\nNo Perm", "+ PMA\nNo Perm")
   #c("- PMA", "Leachate\n50µL"),
   #c("- PMA", "Polyester\nColors"),
   #c("- PMA", "Polyester\nColors\n4 Hours"),
