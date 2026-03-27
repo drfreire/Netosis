@@ -1,0 +1,133 @@
+// MACRO PART 2: Read saved coordinates, crop image, and save individual slices
+// Run this after Part 1 to crop and save individual slices
+
+// Conversion factor - change this when you know the actual scale
+pixelsPerMicron = 1; // Change this value to your actual conversion
+scaleBarLength = 200; // Length in micrometers
+
+// Set up variables
+dir = "/Users/brett/Documents/Cropped/"; 
+crop = "_cropped.bmp";
+
+// Ensure we have an image open
+if (nImages == 0) {
+    exit("No images are open. Please open your original image first.");
+}
+
+// Read the coordinates saved by Part 1
+coordFile = dir + "crop_coordinates.txt";
+if (!File.exists(coordFile)) {
+    exit("Coordinates file not found. Please run Part 1 first: " + coordFile);
+}
+
+// Parse the coordinates
+coordText = File.openAsString(coordFile);
+lines = split(coordText, "\n");
+x = parseInt(substring(lines[0], 2)); // Remove "x=" prefix
+y = parseInt(substring(lines[1], 2)); // Remove "y=" prefix
+width = parseInt(substring(lines[2], 6)); // Remove "width=" prefix
+height = parseInt(substring(lines[3], 7)); // Remove "height=" prefix
+
+print("Loaded coordinates: x=" + x + ", y=" + y + ", width=" + width + ", height=" + height);
+
+// Store the original image title
+originalTitle = getTitle();
+print("Working with image: " + originalTitle);
+
+// Apply the crop
+makeRectangle(x, y, width, height);
+run("Crop");
+print("Cropped image");
+
+// Set the scale and add scale bar
+run("Set Scale...", "distance=" + pixelsPerMicron + " known=1 pixel=1 unit=um");
+run("Scale Bar...", "width=" + scaleBarLength + " height=10 font=14 color=White background=Black location=[Lower Right] bold overlay");
+print("Added scale bar in micrometers (conversion: " + pixelsPerMicron + " pixels/μm)");
+
+// Update the title as it might have changed
+croppedTitle = getTitle();
+print("Working with cropped image: " + croppedTitle);
+
+// Get number of slices in the stack
+numSlices = nSlices;
+print("Processing " + numSlices + " slices");
+
+// Clear any selections before processing slices
+run("Select None");
+
+// Save each slice separately
+for (i = 1; i <= numSlices; i++) {
+    // Ensure we're working with the right window
+    if (isOpen(croppedTitle)) {
+        selectWindow(croppedTitle);
+    } else {
+        print("ERROR: Cropped image window not found!");
+        break;
+    }
+    
+    setSlice(i);
+    
+    // Get slice name
+    sliceName = getInfo("slice.label");
+    print("Processing slice " + i + ", label: '" + sliceName + "'");
+    
+    // Handle empty or null slice names
+    if (sliceName == "" || sliceName == "null") {
+        sliceName = "slice_" + IJ.pad(i, 3);
+        print("Using default name: " + sliceName);
+    }
+    
+    // Clean up slice name - remove file extension if present
+    dotIndex = lastIndexOf(sliceName, ".");
+    if (dotIndex > 0) {
+        nameOnly = substring(sliceName, 0, dotIndex);
+    } else {
+        nameOnly = sliceName;
+    }
+    
+    // Create full output path
+    fullpath = dir + nameOnly + crop;
+    print("Saving to: " + fullpath);
+    
+    // Create a duplicate of current slice
+    run("Duplicate...", "title=temp_slice_" + i);
+    tempWindow = "temp_slice_" + i;
+    
+    // Flatten the image to burn in the scale bar
+    selectWindow(tempWindow);
+    run("Flatten");
+    flattenedWindow = tempWindow + "-1";
+    
+    // Save the flattened image
+    if (isOpen(flattenedWindow)) {
+        selectWindow(flattenedWindow);
+        saveAs("BMP", fullpath);
+        close(); // Close flattened window
+    } else {
+        print("WARNING: Flattened window not found for slice " + i);
+    }
+    
+    // Clean up temporary window
+    if (isOpen(tempWindow)) {
+        selectWindow(tempWindow);
+        close();
+    }
+}
+
+// Clean up the coordinates file
+File.delete(coordFile);
+print("Cleaned up coordinates file");
+// Close all open files without saving
+run("Close All");
+print("Closed all open files");
+
+// Open the saved file
+open(dir + "original_with_crop_rectangle.tif");
+print("Opened: " + dir + "original_with_crop_rectangle.tif");
+
+print("MACRO COMPLETE!");
+print("Individual cropped slices saved to: " + dir);
+print("Cropped stack reopened for viewing.");
+print("PART 2 COMPLETE!");
+print("Individual cropped slices saved to: " + dir);
+print("Original image with rectangle overlay: " + dir + "original_with_crop_rectangle.bmp");
