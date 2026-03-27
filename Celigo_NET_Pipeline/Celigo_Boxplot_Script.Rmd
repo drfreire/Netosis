@@ -25,7 +25,7 @@ library(RColorBrewer)
 
 ```{r DATA IMPORT}
 # Specify how many runs will be included for analysis
-runs_included = 1
+runs_included = 6
 
 # Read multiple files and name them for graph legends etc.
 read_multiple_files <- function(n_files = runs_included) {
@@ -505,7 +505,8 @@ generate_metadata <- function(plot_data, group_by_source, normalize, test_method
     condition_code = condition_code,
     measure_string_file = paste(measure_string, collapse = "_"),
     wrapped_title = wrapped_title,
-    label_y = label_y
+    label_y = label_y,
+    norm_state = norm_state
   )
 }
 
@@ -793,7 +794,7 @@ finalize_plot <- function(p, metadata, aesthetics, title_size, axis_x_size,
   return(p)
 }
 
-save_and_display <- function(p, metadata, test_method, pairwise_correction, file_type, save_width, save_height) {
+save_and_display <- function(p, metadata, test_method, pairwise_correction, norm_state, file_type, save_width, save_height) {
   
   print(p)
   
@@ -801,8 +802,7 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, file
   correction_short <- c("bonferroni" = "bonf", "holm" = "holm", "BH" = "BH", "none" = "none")
   
   plot_name <- paste0("Run", metadata$run_string, "_", metadata$measure_string_file, "_", 
-                     metadata$condition_code, "_", test_name_short[test_method], "_", correction_short[pairwise_correction],
-                     "-bxplt", file_type)
+                     metadata$condition_code, "_", test_name_short[test_method], "_", correction_short[pairwise_correction], metadata$norm_state, "-bxplt", file_type)
   
   ggsave(plot_name, plot = p, width = save_width, height = save_height)
   cat("\nPlot saved to:", plot_name, "\n")
@@ -812,7 +812,7 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, file
 ```
 
 ```{r edits}
-#NET_Data_Combined$Condition <- gsub("Polyester\nColors\nHeat\nKilled", "Polyester\nColors\nHeat Killed", NET_Data_Combined$Condition)
+#NET_Data_Combined$Condition <- gsub("Polyester\nColors\n4 Hours", "Polyester\nColors", NET_Data_Combined$Condition)
 # =======================
 # In plot 2, right after aesthetics <- setup_plot_aesthetics(...)
 #aesthetics$shape_values["Run 7"] <- 15  # Force Run 7 to use shape 17 (triangle)
@@ -824,12 +824,19 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, file
 ```{r MAIN SCRIPT}
 # === USER SETTINGS ===
 runs_to_plot <- c(
+                  "Run 7",
+                  "Run 10",
+                  "Run 12",
+                  "Run 13",
+                  "Run 14",
                   "Run 15"
                   )
-conditions_to_plot <- c(""
+conditions_to_plot <- c("- PMA",
+                        "+ PMA",
+                        "Polyester\nColors"
                         )
                                #Set to c("") to plot all possible conditions
-measure_to_plot <- c("%MPO")
+measure_to_plot <- c("CitH3.Index")
 group_by_source <- FALSE 
 normalize <- FALSE
 test_method <- "wilcoxon"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
@@ -857,13 +864,13 @@ bracket_settings <- list(
 # Custom comparison pairs (used if use_custom_pairs = TRUE)
 custom_pairs_list <- list(
   c("- PMA", "+ PMA"),
-  c("- PMA", "Blue\nPolyester"),
-  c("- PMA", "Red\nPolyester"),
-  c("- PMA", "Virgin\nPolyester"),
-  c("- PMA", "White\nCotton"),
-  c("- PMA\nNo Perm", "+ PMA\nNo Perm")
+  #c("- PMA", "Blue\nPolyester"),
+  #c("- PMA", "Red\nPolyester"),
+  #c("- PMA", "Virgin\nPolyester"),
+  #c("- PMA", "White\nCotton"),
+  #c("- PMA\nNo Perm", "+ PMA\nNo Perm")
   #c("- PMA", "Leachate\n50µL"),
-  #c("- PMA", "Polyester\nColors"),
+  c("- PMA", "Polyester\nColors")
   #c("- PMA", "Polyester\nColors\n4 Hours"),
   #c("- PMA", "Polyester\nColors\n8 Hours"),
   #c("- PMA", "Polyester\nColors\n16 Hours"),
@@ -1006,7 +1013,7 @@ if (group_by_source) {
 p <- finalize_plot(p, metadata, aesthetics, title_size, axis_x_size,
                   axis_y_tick_size, axis_y_title_size, legend_position, legend_size)
 
-plot_name <- save_and_display(p, metadata, test_method, pairwise_correction, file_type, save_width, save_height)
+plot_name <- save_and_display(p, metadata, test_method, pairwise_correction, norm_state, file_type, save_width, save_height)
 ```
 ---
 ## **Workflow:**
