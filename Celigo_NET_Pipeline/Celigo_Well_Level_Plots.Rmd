@@ -4,7 +4,8 @@ output: html_notebook
 ---
 
 ```{r print-platemap-conditions-labelled}
-Condition <- read.csv("Example_Conditions.csv", check.names = FALSE)
+file_path <- file.choose()
+Condition <- read.csv(file_path, check.names = FALSE)
 
 Condition$Condition <- gsub("\\\\n", "\n", Condition$Condition)
 p<-plate_plot(
@@ -13,7 +14,7 @@ p<-plate_plot(
   value = Condition,
   plate_size = 96,
   plate_type = "round",
-    title = "Supernatant Platemap", 
+    title = "Run 15 Live Dead", 
   label = Condition,
   show_legend = FALSE,
   label_size = 1.1 ,
@@ -23,7 +24,7 @@ p<-plate_plot(
   legend_n_row = 5
 )
 
-    ggsave("Timepoint_Assay.png", plot = p, width = 6, height = 4)
+    ggsave("NET15_LD_Platemap.png", plot = p, width = 6, height = 4)
     
     plot(p)
 ```
@@ -31,19 +32,19 @@ p<-plate_plot(
 ```{r print-heat-map-labelled}
 p<-plate_plot(
   data = NET_Data_Combined,
-  title = "Run 9 MPO Area Gate %",
+  title = "Run 15 CitH3 MFI",
   position = Well,
-  value = Fraction.Gated,
+  value = AVG.CitH3.Mean.Intensity,
   label = Condition,
-  label_size = 1.3, 
-  scale = 1.0,
-  plate_size = 24,
+  label_size = 1.4, 
+  scale = 0.9,
+  plate_size = 48,
   plate_type = "round",
   show_legend = TRUE,
 ) +
     labs(fill = "") 
 
-ggsave("net9_special1.pdf", plot = p, width = 4, height = 3)
+ggsave("Run15_CitH3MFI_Heatmap.pdf", plot = p, width = 4, height = 3)
 print(p)
 ```
 
@@ -77,112 +78,3 @@ clean_file <- gsub("[^A-Za-z0-9_ ]", "_", col_name)
 
 ```
 
-```{r lump-condition-symbol-PMA}
-# Define runs, conditions, and measures to plot
-runs_to_plot <- c("Run 6")
-conditions_to_plot <- c("Cells Only", "Cells Only\n+ PMA", "MPs 2 Hour", "MPs 2 Hour\n+ PMA")
-measure_to_plot <- "CitH3.Index"
-controls_to_plot <-c("- PMA", "+ PMA")
-
-# Prepare the data
-plot_data <- NET_Data_Combined %>%
-  
-   filter(Source %in% runs_to_plot) %>%
-  select(Well, Condition, Source, all_of(measure_to_plot)) %>%
-  rename(value = all_of(measure_to_plot)) %>%
-  filter(!is.na(value)) %>%
-  mutate(Base_Condition = gsub("\\n\\+ PMA|\\+ PMA", "", Condition),
-         PMA_Status = if_else(grepl("PMA", Condition), "+ PMA", "- PMA")) %>%
-  filter(Base_Condition %in% c("Cells Only", "MPs\n2 Hour")) %>%
-  mutate(Base_Condition = factor(Base_Condition, levels = c("Cells Only", "MPs\n2 Hour")),
-         Source = factor(Source))
-
-base_condition <- c("Cells Only", "MPs\n2 Hour")
-
-unique_PMA <- unique(plot_data$PMA_Status)
-
-# Get unique source names from your filtered data, extract numbers, and make #-#-# string
-unique_sources <- unique(plot_data$Source)
-run_numbers <- sort(as.numeric(gsub("Run ", "", unique_sources))) 
-run_string <- paste(run_numbers, collapse = "&")
-
-# Mixed-effects model analysis
-mixed_model <- lmer(value ~ Base_Condition + (1|PMA_Status), data = plot_data)
-model_summary <- summary(mixed_model)
-
-# Extract p-value from the model
-row_index <- grep("Condition", rownames(model_summary$coefficients))
-p_value <- round(model_summary$coefficients[row_index, "Pr(>|t|)"], 3)
-
-# Extract effect size (difference between conditions)
-condition_effect <- round(model_summary$coefficients[2, "Estimate"], 4)
-
-# Wrap title
-wrapped_title <- str_wrap(paste("Runs", run_string, measure_to_plot, "(Mixed-Effects ANOVA)"), width = 25)
-wrapped_title <- gsub("\\.", " ", wrapped_title)
-
-# Fix y-axis
-label_y <- gsub("\\.", " ", measure_to_plot)
-
-# Create shape values (cycle through shape numbers if you have more than 3)
-  shape_values <- c(16, 17, 15, 18, 19)[1:length(unique_PMA)]
-  names(shape_values) <- unique_PMA
-
-
-# Column colors
-  get_color <- function(col_name) {
-   if (grepl("MPO", col_name)) {
-    return("green")
-  } else if (grepl("CitH3", col_name)) {
-    return("red")
-  } else if (grepl("DAPI", col_name)) {
-    return("blue")
-  } else if (grepl("Bright.Field", col_name)) {
-    return("grey")
-  } else {
-    return("black")
-  }
-}
-  
-# Create the boxplot
-p <- ggplot(plot_data, aes(x = Base_Condition, y = value,)) +
-  
-  geom_boxplot(alpha = 0.7, width = 0.6, fill = get_color(measure_to_plot)) +
-  
-  # Add individual data points with different shapes for each Source
-  geom_point(aes(shape = PMA_Status),
-             position = position_jitterdodge(jitter.width = 0.2),
-             size = 3, alpha = 0.8) +
-
-# Use in the plot
-scale_shape_manual(values = shape_values,
-                   name = "") +
-  
-  # Add comparison bracket (visual only)
-  geom_signif(comparisons = list(base_condition),
-              annotations = "", 
-              textsize = 0) +
-  
-  # Add mixed-effects p-value annotation
-  annotate("text", x = 1.5, y = max(plot_data$value) * 1.15, 
-           label = paste("p =", p_value), size = 4) +
-  
-  # Add effect size annotation
-  annotate("text", x = 1.5, y = max(plot_data$value) * 1.05, 
-           label = paste("Effect Size =", condition_effect), size = 3, color = "gray50") +
-  
-  # Formatting
-  labs(x = "", 
-       y = label_y, 
-       title = wrapped_title) +
-  theme_classic() +
-  theme(
-    plot.title = element_text(size = 16, hjust = 0.5),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-    axis.text.y = element_text(size = 12),
-    legend.position = "right")
-
-# Print the plot
-print(p)
-ggsave("MPs_2hr.time_plus-minus_PMA.pdf", plot = p, width = 4, height = 6 )
-```

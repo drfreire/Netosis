@@ -5,9 +5,11 @@ date: "2026-03-19"
 ---
 
 ```{r load-libraries}
-library(data.table)
+
 library(tidyverse)
 library(rstudioapi)
+library(dplyr)
+library(data.table)
 ```
 
 ```{r Object-Level-Import}
@@ -310,7 +312,45 @@ NET_Data_Combined$DAPI.Index <- as.numeric(NET_Data_Combined$'%DAPI') * as.numer
 setDT(NET_Data_Combined)
 ```
 
-```{r Object-Lvl-Avg-and-Attach-from-CSV}
+```{r LiveDead-data-import}
+ user_input <- showPrompt(title = "Organizing Data:", message = "Enter dataset name.")
+
+##You will be prompted to select the .csv file from Celigo. Make sure it is in the "tabular" format.
+cat("Select your tabular Celigo .csv file\n")
+
+##This removes all the extraneous info for the data file that R will create. The original .csv remains unchanged.
+NET_Data_Combined<-read.csv(file.choose(), skip = 15, header = TRUE, check.names = TRUE)%>% ##This is a method allowing you to manually select the .csv
+  select(1:33)%>%
+  filter((Row %in% LETTERS[1:8]) &(Column %in% 1:12))
+
+##This converts the % values into decimals (e.g. 5% becomes 0.05)
+NET_Data_Combined<-mutate(NET_Data_Combined, across(starts_with("X.."), ~as.numeric(gsub("%", "", .x)) / 100))
+
+NET_Data_Combined$Percent.Dead <- as.numeric(NET_Data_Combined$'To.Pro.Count') / as.numeric(NET_Data_Combined$'Bright.Field.Count')
+NET_Data_Combined$Percent.Live <- (1 - as.numeric((NET_Data_Combined$Percent.Dead)))
+
+##This adds the "Condition" values from the platemap .csv to the data the R code will use. Make sure it is formatted correctly.
+##Condition <- read.csv("R_Celigo_Condition.csv", check.names = FALSE)
+Condition <- read.csv(file.choose(), check.names = FALSE)
+NET_Data_Combined <- NET_Data_Combined %>%
+  left_join(Condition %>% select(Well, Condition), by = "Well")
+
+NET_Data_Combined$Source <- user_input
+
+##I add an extra column at the end of the data with the well names because it was getting hard to reference what I was looking at when scrolling through the data file.
+NET_Data_Combined$Z <- NET_Data_Combined$Well
+
+##This makes \n in the platemap condition file become a new line. It's weird.
+NET_Data_Combined$Condition <- gsub("\\\\n", "\n", NET_Data_Combined$Condition)
+
+##Not sure this is necessary, sometimes I was running into issues where this header name caused problems because it isn't a number.
+NET_Data_Combined$Total.Count <- as.numeric(as.character(NET_Data_Combined$Total.Count))
+
+##This names the percent columns correctly
+names(NET_Data_Combined) <- gsub("^X\\.\\.", "%", names(NET_Data_Combined))
+```
+
+```{r Object-Lvl-Avg-and-Attach-to-well-table-from-CSV}
 ## ==============================
 ## == Import just an average ====
 ## == value from object level ===
@@ -350,7 +390,7 @@ NET_Data_Combined <- NET_Data_Combined %>%
   left_join(well_averages %>% select(Well, Source, Avg_Area), by = c("Well", "Source"))
 ```
 
-```{r Object-Level-Avg-and-Attach-from-DataTable}
+```{r Object-Level-Avg-and-Attach-to-well-table-from-DataTable}
 # This averages object level data to use in the well level boxplot or platemap
 well_averages <- Object_Table[, .(
  n_objects = .N,

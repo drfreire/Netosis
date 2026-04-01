@@ -25,7 +25,7 @@ library(RColorBrewer)
 
 ```{r DATA IMPORT}
 # Specify how many runs will be included for analysis
-runs_included = 6
+runs_included = 1
 
 # Read multiple files and name them for graph legends etc.
 read_multiple_files <- function(n_files = runs_included) {
@@ -71,6 +71,7 @@ NET_Data_Combined <- read_multiple_files(runs_included)
 NET_Data_Combined<-mutate(NET_Data_Combined, across(starts_with("X.."), ~as.numeric(gsub("%", "", .x)) / 100))
 NET_Data_Combined$Condition <- gsub("\\\\n", "\n", NET_Data_Combined$Condition)
 names(NET_Data_Combined) <- gsub("^X\\.\\.", "%", names(NET_Data_Combined))
+NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
 
 # Create index columns
 NET_Data_Combined$MPO.Index <- as.numeric(NET_Data_Combined$'%MPO') * as.numeric(NET_Data_Combined$'AVG.MPO.Mean.Intensity')
@@ -212,8 +213,14 @@ prepare_plot_data <- function(raw_data, runs, conditions, measures, normalize_fl
   if (normalize_flag) {
     plot_data <- plot_data %>%
       group_by(Source) %>%
-      mutate(value = (value - mean(value)) / sd(value)) %>%
-      ungroup()
+      mutate(
+      control_mean = mean(value[Condition == "- PMA"]),  
+      value = value / control_mean  # fold-change relative to control
+    ) %>%
+    ungroup()
+      #group_by(Source) %>%
+      #mutate(value = (value - mean(value)) / sd(value)) %>%
+      #ungroup()
   }
   
   return(plot_data)
@@ -812,6 +819,8 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, norm
 ```
 
 ```{r edits}
+#NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
+#class(NET_Data_Combined$Total.Count)
 #NET_Data_Combined$Condition <- gsub("Polyester\nColors\n4 Hours", "Polyester\nColors", NET_Data_Combined$Condition)
 # =======================
 # In plot 2, right after aesthetics <- setup_plot_aesthetics(...)
@@ -826,7 +835,7 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, norm
 runs_to_plot <- c(
                   "Run 7",
                   "Run 10",
-                  "Run 12",
+                  #"Run 12",
                   "Run 13",
                   "Run 14",
                   "Run 15"
@@ -836,9 +845,9 @@ conditions_to_plot <- c("- PMA",
                         "Polyester\nColors"
                         )
                                #Set to c("") to plot all possible conditions
-measure_to_plot <- c("CitH3.Index")
+measure_to_plot <- c("Total.Count")
 group_by_source <- FALSE 
-normalize <- FALSE
+normalize <- TRUE
 test_method <- "wilcoxon"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
 pairwise_correction <- "none"                    # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
 use_custom_pairs <- TRUE         
@@ -847,7 +856,7 @@ use_custom_title <- FALSE
 
 # Save settings
 file_type <- ".png"
-save_width <-16
+save_width <-8
 save_height <- 8
 
 # Bracket settings 
@@ -858,7 +867,7 @@ bracket_settings <- list(
   height_div = 32,
   text_offset_div = 23,
   linewidth = 0.5,
-  text_sizes = c(3, 3, 4)
+  text_sizes = c(5, 5, 6)
 )
 
 # Custom comparison pairs (used if use_custom_pairs = TRUE)
@@ -870,6 +879,7 @@ custom_pairs_list <- list(
   #c("- PMA", "White\nCotton"),
   #c("- PMA\nNo Perm", "+ PMA\nNo Perm")
   #c("- PMA", "Leachate\n50µL"),
+  #c("+ PMA", "Polyester\nColors"),
   c("- PMA", "Polyester\nColors")
   #c("- PMA", "Polyester\nColors\n4 Hours"),
   #c("- PMA", "Polyester\nColors\n8 Hours"),
@@ -898,7 +908,7 @@ legend_size <- 12
 
 jitter_width_grouped <- 0.2 
 jitter_width_ungrouped <- 0.8
-point_size <- 9
+point_size <- 4
 point_alpha <- 0.8
 
 box_outlier_shape <- NA
