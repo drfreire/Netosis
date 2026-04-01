@@ -1,0 +1,23 @@
+---
+title: "Celigo_Well_Level_Plots"
+output: html_notebook
+---
+
+```{r print-heat-map-labelled}
+p<-plate_plot(
+  data = NET_Data_Combined,
+  title = "Run 15 CitH3 MFI",
+  position = Well,
+  value = AVG.CitH3.Mean.Intensity,
+  label = Condition,
+  label_size = 1.4, 
+  scale = 0.9,
+  plate_size = 48,
+  plate_type = "round",
+  show_legend = TRUE,
+) +
+    labs(fill = "") 
+
+ggsave("Run15_CitH3MFI_Heatmap.pdf", plot = p, width = 4, height = 3)
+print(p)
+```

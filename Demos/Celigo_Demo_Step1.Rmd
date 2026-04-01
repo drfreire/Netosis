@@ -1,0 +1,30 @@
+---
+title: "Celigo_Well_Level_Plots"
+output: html_notebook
+---
+
+```{r print-platemap-conditions-labelled}
+file_path <- file.choose()
+Condition <- read.csv(file_path, check.names = FALSE)
+
+Condition$Condition <- gsub("\\\\n", "\n", Condition$Condition)
+p<-plate_plot(
+  data = Condition,
+  position = Well,
+  value = Condition,
+  plate_size = 96,
+  plate_type = "round",
+    title = "Run 15 Live Dead", 
+  label = Condition,
+  show_legend = FALSE,
+  label_size = 1.1 ,
+  title_size = 11,
+  colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D", "#B33C47", "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
+  scale = 1.4  ,
+  legend_n_row = 5
+)
+
+    ggsave("NET15_LD_Platemap.png", plot = p, width = 6, height = 4)
+    
+    plot(p)
+```
