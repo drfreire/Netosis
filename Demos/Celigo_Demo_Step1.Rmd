@@ -14,7 +14,7 @@ p<-plate_plot(
   value = Condition,
   plate_size = 96,
   plate_type = "round",
-    title = "Run 15 Live Dead", 
+    title = "Example", 
   label = Condition,
   show_legend = FALSE,
   label_size = 1.1 ,
@@ -24,7 +24,7 @@ p<-plate_plot(
   legend_n_row = 5
 )
 
-    ggsave("NET15_LD_Platemap.png", plot = p, width = 6, height = 4)
+    ggsave("Example.png", plot = p, width = 6, height = 4)
     
     plot(p)
 ```

@@ -5,7 +5,6 @@ date: "2026-03-19"
 ---
 
 ```{r load-libraries}
-
 library(tidyverse)
 library(rstudioapi)
 library(dplyr)
@@ -13,7 +12,7 @@ library(data.table)
 ```
 
 ```{r Object-Level-Import}
-# === This is the generic 1st step in the import pipeline ===
+# === This is the generic 1st step in the object level analysis pipeline ===
 
 # Specify how many runs will be included
 runs_included = 3
@@ -76,7 +75,7 @@ Object_Table[, Condition := gsub("\\\\n", " ", Condition)]
 ```
 
 ```{r Add-New-Data-to-Object-Table}
-# === Robust data import with add/replace functionality ===
+# === Robust data import with add/replace functionality for analysis of multiple runs or mask types ===
 
 cat("=== Starting Data Import ===\n")
 
@@ -268,7 +267,7 @@ cat("Ready for analysis!\n")
 
 ```{r Well-Level-Import}
 # === DATA IMPORT ===
-runs_included = 1
+runs_included = 5
 
 read_multiple_files <- function(n_files = runs_included) {
   data_list <- list()
@@ -310,6 +309,82 @@ NET_Data_Combined$CitH3.Index <- as.numeric(NET_Data_Combined$'%CitH3') * as.num
 NET_Data_Combined$DAPI.Index <- as.numeric(NET_Data_Combined$'%DAPI') * as.numeric(NET_Data_Combined$'AVG.DAPI.Mean.Intensity')
 
 setDT(NET_Data_Combined)
+```
+
+```{r Well-Level-Add-New-Data}
+# === APPEND NEW DATA TO EXISTING NET_Data_Combined ===
+
+append_new_data <- function(existing_data) {
+  
+  # Get new dataset name
+  repeat {
+    user_input <- showPrompt(title = "Add New Dataset:", 
+                            message = "Enter dataset name (Source)")
+    
+    # Check if Source already exists
+    if (user_input %in% unique(existing_data$Source)) {
+      showDialog("Error", paste("Source '", user_input, "' already exists!\nExisting sources: ", 
+                               paste(unique(existing_data$Source), collapse = ", ")))
+    } else {
+      break
+    }
+  }
+  
+  # Select tabular data
+  cat("\nSelect tabular .csv for:", user_input, "\n")
+  file_path <- file.choose()
+  
+  data <- read.csv(file_path, skip = 15, header = TRUE, check.names = TRUE) %>%
+    dplyr::select(1:39) %>%
+    filter((Row %in% LETTERS[1:8]) & (Column %in% 1:12))
+  
+  # Select condition mapping
+  cat("Select condition .csv for:", user_input, "\n")
+  condition_path <- file.choose()
+  Condition <- read.csv(condition_path, check.names = FALSE)
+  
+  data <- data %>%
+    left_join(Condition %>% dplyr::select(Well, Condition), by = "Well")
+  
+  data$Source <- user_input
+  
+  # Apply same formatting fixes as original import
+  data <- mutate(data, across(starts_with("X.."), ~as.numeric(gsub("%", "", .x)) / 100))
+  data$Condition <- gsub("\\\\n", "\n", data$Condition)
+  names(data) <- gsub("^X\\.\\.", "%", names(data))
+  
+  # Calculate Index columns
+  data$MPO.Index <- as.numeric(data$'%MPO') * as.numeric(data$'AVG.MPO.Mean.Intensity')
+  data$CitH3.Index <- as.numeric(data$'%CitH3') * as.numeric(data$'AVG.CitH3.Mean.Intensity')
+  data$DAPI.Index <- as.numeric(data$'%DAPI') * as.numeric(data$'AVG.DAPI.Mean.Intensity')
+  
+  setDT(data)
+  
+  # Calculate Min-Max normalization for this Source
+  data <- data %>%
+    mutate(
+      min_val = mean(CitH3.Index[Condition == "- PMA"], na.rm = TRUE),
+      max_val = mean(CitH3.Index[Condition == "+ PMA"], na.rm = TRUE),
+      CitH3.Min.Max.Normalized = (CitH3.Index - min_val) / (max_val - min_val)
+    )
+  
+  setDT(data)
+  
+  cat("\nSuccessfully added:", user_input, "\n")
+  cat("New data rows:", nrow(data), "\n")
+  cat("Combined", file_path, "and", condition_path, "\n\n")
+  
+  # Combine with existing data
+  combined <- rbindlist(list(existing_data, data), fill = TRUE)
+  
+  cat("Total sources:", length(unique(combined$Source)), "\n")
+  cat("Total rows:", nrow(combined), "\n")
+  
+  return(combined)
+}
+
+# Usage:
+NET_Data_Combined <- append_new_data(NET_Data_Combined)
 ```
 
 ```{r LiveDead-data-import}

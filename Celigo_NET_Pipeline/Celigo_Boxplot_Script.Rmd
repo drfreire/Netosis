@@ -212,13 +212,13 @@ prepare_plot_data <- function(raw_data, runs, conditions, measures, normalize_fl
   
   if (normalize_flag) {
     plot_data <- plot_data %>%
-      group_by(Source) %>%
+      group_by(Source) %>% ##This is Fold Change
       mutate(
       control_mean = mean(value[Condition == "- PMA"]),  
       value = value / control_mean  # fold-change relative to control
     ) %>%
     ungroup()
-      #group_by(Source) %>%
+      #group_by(Source) %>% ##This is Z-score
       #mutate(value = (value - mean(value)) / sd(value)) %>%
       #ungroup()
   }
@@ -821,7 +821,16 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, norm
 ```{r edits}
 #NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
 #class(NET_Data_Combined$Total.Count)
-#NET_Data_Combined$Condition <- gsub("Polyester\nColors\n4 Hours", "Polyester\nColors", NET_Data_Combined$Condition)
+#NET_Data_Combined$Condition <- gsub("Red\nPolyester", "Polyester\nColors", NET_Data_Combined$Condition)
+NET_Data_Combined <- NET_Data_Combined %>%
+  group_by(Source) %>%
+  mutate(
+    min_val = mean(CitH3.Index[Condition == "- PMA"]),
+    max_val = mean(CitH3.Index[Condition == "+ PMA"]),
+    CitH3.Min.Max.Normalized = (CitH3.Index - min_val) / (max_val - min_val)
+  ) %>%
+  ungroup()
+
 # =======================
 # In plot 2, right after aesthetics <- setup_plot_aesthetics(...)
 #aesthetics$shape_values["Run 7"] <- 15  # Force Run 7 to use shape 17 (triangle)
@@ -833,21 +842,22 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, norm
 ```{r MAIN SCRIPT}
 # === USER SETTINGS ===
 runs_to_plot <- c(
+                  "Run 6",
                   "Run 7",
                   "Run 10",
-                  #"Run 12",
-                  "Run 13",
-                  "Run 14",
+                  #"Run 13",
+                  #"Run 14",
                   "Run 15"
                   )
 conditions_to_plot <- c("- PMA",
                         "+ PMA",
-                        "Polyester\nColors"
+                        "Polyester\nColors",
+                        "White\nCotton"
                         )
                                #Set to c("") to plot all possible conditions
-measure_to_plot <- c("Total.Count")
+measure_to_plot <- c("CitH3.Min.Max.Normalized")
 group_by_source <- FALSE 
-normalize <- TRUE
+normalize <- FALSE
 test_method <- "wilcoxon"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
 pairwise_correction <- "none"                    # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
 use_custom_pairs <- TRUE         
@@ -872,15 +882,16 @@ bracket_settings <- list(
 
 # Custom comparison pairs (used if use_custom_pairs = TRUE)
 custom_pairs_list <- list(
+  c("Polyester\nColors", "White\nCotton"),
   c("- PMA", "+ PMA"),
   #c("- PMA", "Blue\nPolyester"),
   #c("- PMA", "Red\nPolyester"),
   #c("- PMA", "Virgin\nPolyester"),
-  #c("- PMA", "White\nCotton"),
   #c("- PMA\nNo Perm", "+ PMA\nNo Perm")
   #c("- PMA", "Leachate\n50µL"),
   #c("+ PMA", "Polyester\nColors"),
-  c("- PMA", "Polyester\nColors")
+  c("- PMA", "Polyester\nColors"),
+  c("- PMA", "White\nCotton")
   #c("- PMA", "Polyester\nColors\n4 Hours"),
   #c("- PMA", "Polyester\nColors\n8 Hours"),
   #c("- PMA", "Polyester\nColors\n16 Hours"),
