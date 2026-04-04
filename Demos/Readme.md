@@ -1,6 +1,6 @@
 
 
-======================== DEMO
+DEMO
 This is a simple demo of the data analysis pipeline 
 for Celigo well-level data.
 
