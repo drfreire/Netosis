@@ -1,9 +1,8 @@
 
 
-======================== DEMO ========================
+======================== DEMO
 This is a simple demo of the data analysis pipeline 
 for Celigo well-level data.
-======================================================
 
 
 1. Open the Example_Conditions and Example_Dataset csv 
