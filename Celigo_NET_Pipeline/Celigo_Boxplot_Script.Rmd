@@ -25,7 +25,7 @@ library(RColorBrewer)
 
 ```{r DATA IMPORT}
 # Specify how many runs will be included for analysis
-runs_included = 1
+runs_included = 10
 
 # Read multiple files and name them for graph legends etc.
 read_multiple_files <- function(n_files = runs_included) {
@@ -463,6 +463,67 @@ calculate_rank_lmm_pvalues <- function(plot_data, condition_pairs, group_by_sour
     })
   }
 }
+
+calculate_ttest_pvalues <- function(plot_data, condition_pairs, group_by_source, pairwise_correction, correction_needed) {
+  if (group_by_source) {
+    run_comparisons <- plot_data %>%
+      group_by(Source, Measure) %>%
+      group_modify(~ {
+        unique_conditions <- unique(.x$Condition)
+        if (length(unique_conditions) >= 2) {
+          results <- data.frame()
+          
+          for (pair in condition_pairs) {
+            pair_data <- .x %>% filter(Condition %in% pair)
+            if (nrow(pair_data) > 0) {
+              test_result <- t.test(value ~ Condition, data = pair_data, 
+                                   alternative = "two.sided", var.equal = FALSE)
+              results <- rbind(results, 
+                              data.frame(cond1 = as.character(pair[1]),
+                                       cond2 = as.character(pair[2]),
+                                       p_value = test_result$p.value))
+            }
+          }
+          
+          results <- apply_pvalue_correction(results, correction_needed, pairwise_correction)
+          results
+        } else {
+          data.frame(cond1 = character(), cond2 = character(), p_value = numeric(), p_adjusted = numeric())
+        }
+      }) %>%
+      ungroup()
+    
+    cat("\n=== P-values for each Source-Measure combination (t-test) ===\n")
+    print(run_comparisons)
+    return(list(type = "grouped", data = run_comparisons))
+    
+  } else {
+    overall_pairwise <- data.frame()
+    for (pair in condition_pairs) {
+      pair_data <- plot_data %>% filter(Condition %in% pair)
+      if (nrow(pair_data) > 0) {
+        result <- t.test(value ~ Condition, data = pair_data, 
+                        alternative = "two.sided", var.equal = FALSE)
+        overall_pairwise <- rbind(overall_pairwise, 
+                                  data.frame(cond1 = as.character(pair[1]), 
+                                           cond2 = as.character(pair[2]),
+                                           p_value = result$p.value))
+      }
+    }
+    
+    overall_pairwise <- apply_pvalue_correction(overall_pairwise, correction_needed, pairwise_correction)
+    
+    if (correction_needed) {
+      cat("\n=== P-values (with", pairwise_correction, "correction - t-test) ===\n")
+      print(overall_pairwise[, c("cond1", "cond2", "p_value", "p_adjusted")])
+    } else {
+      cat("\n=== P-values (no correction applied - t-test) ===\n")
+      print(overall_pairwise[, c("cond1", "cond2", "p_value", "p_adjusted")])
+    }
+    
+    return(list(type = "ungrouped", data = overall_pairwise))
+  }
+}
 ```
 
 ```{r 4-METADATA & AESTHETICS FUNCTIONS}
@@ -488,7 +549,7 @@ generate_metadata <- function(plot_data, group_by_source, normalize, test_method
   measure_string <- gsub("%", "percent", measure_to_plot)
   measure_string_collapsed <- paste(measure_string, collapse = " & ")
   
-  test_name_map <- c("wilcoxon" = "Wilcoxon", "art_lmm" = "ART-LMM", "rank_lmm" = "Rank-LMM", "none" = "No Significance")
+  test_name_map <- c("wilcoxon" = "Wilcoxon", "art_lmm" = "ART-LMM", "rank_lmm" = "Rank-LMM", "ttest" = "t-test", "none" = "")
   title_test_name <- if (correction_needed) {
     paste0("(", test_name_map[test_method], " (", pairwise_correction, "))")
   } else {
@@ -805,8 +866,8 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, norm
   
   print(p)
   
-  test_name_short <- c("wilcoxon" = "wlcxn", "art_lmm" = "art-lmm", "rank_lmm" = "rnk-lmm")
-  correction_short <- c("bonferroni" = "bonf", "holm" = "holm", "BH" = "BH", "none" = "none")
+  test_name_short <- c("wilcoxon" = "wlcxn", "art_lmm" = "art-lmm", "rank_lmm" = "rnk-lmm", "ttest" = "t-test")
+  correction_short <- c("bonferroni" = "bonf", "holm" = "holm", "BH" = "BH", "none" = "")
   
   plot_name <- paste0("Run", metadata$run_string, "_", metadata$measure_string_file, "_", 
                      metadata$condition_code, "_", test_name_short[test_method], "_", correction_short[pairwise_correction], metadata$norm_state, "-bxplt", file_type)
@@ -818,10 +879,7 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, norm
 }
 ```
 
-```{r edits}
-#NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
-#class(NET_Data_Combined$Total.Count)
-#NET_Data_Combined$Condition <- gsub("Red\nPolyester", "Polyester\nColors", NET_Data_Combined$Condition)
+```{r min-max-norm}
 NET_Data_Combined <- NET_Data_Combined %>%
   group_by(Source) %>%
   mutate(
@@ -830,6 +888,16 @@ NET_Data_Combined <- NET_Data_Combined %>%
     CitH3.Min.Max.Normalized = (CitH3.Index - min_val) / (max_val - min_val)
   ) %>%
   ungroup()
+```
+
+```{r edits}
+#NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
+
+#class(NET_Data_Combined$Total.Count)
+
+#NET_Data_Combined$Condition <- gsub("Polyester\nColors\n4 Hours", "Polyester\nColors", NET_Data_Combined$Condition)
+
+#NET_Data_Combined[, Source := "Pooled"]
 
 # =======================
 # In plot 2, right after aesthetics <- setup_plot_aesthetics(...)
@@ -842,14 +910,18 @@ NET_Data_Combined <- NET_Data_Combined %>%
 ```{r MAIN SCRIPT}
 # === USER SETTINGS ===
 runs_to_plot <- c(
-                  "Run 6",
                   "Run 7",
+                  #"Run 8",
+                  #"Run 9",
                   "Run 10",
+                  #"Run 11",
+                  #"Run 12"
                   #"Run 13",
-                  #"Run 14",
+                  "Run 14",
                   "Run 15"
                   )
-conditions_to_plot <- c("- PMA",
+conditions_to_plot <- c(
+                        "- PMA",
                         "+ PMA",
                         "Polyester\nColors",
                         "White\nCotton"
@@ -857,8 +929,8 @@ conditions_to_plot <- c("- PMA",
                                #Set to c("") to plot all possible conditions
 measure_to_plot <- c("CitH3.Min.Max.Normalized")
 group_by_source <- FALSE 
-normalize <- FALSE
-test_method <- "wilcoxon"                      # Options: "wilcoxon", "art_lmm", "rank_lmm", "none"
+normalize <- FALSE                          #Specifically z-score, min-max norm is created as a column "CitH3.Min.Max.Normalized
+test_method <- "ttest"                      # Options: "wilcoxon", "ttest", "art_lmm", "rank_lmm", "none"
 pairwise_correction <- "none"                    # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
 use_custom_pairs <- TRUE         
 colored_boxes <- FALSE
@@ -866,11 +938,11 @@ use_custom_title <- FALSE
 
 # Save settings
 file_type <- ".png"
-save_width <-8
-save_height <- 8
+save_width <- 14
+save_height <- 10
 
 # Bracket settings 
-bracket_coefficient <- 1                  # Key Bracket Spacing Variable
+bracket_coefficient <- 1.8                  # Key Bracket Spacing Variable
 bracket_settings <- list(
   y_start_mult = 1.15,
   step_div = 10,
@@ -882,7 +954,7 @@ bracket_settings <- list(
 
 # Custom comparison pairs (used if use_custom_pairs = TRUE)
 custom_pairs_list <- list(
-  c("Polyester\nColors", "White\nCotton"),
+  #c("Polyester\nColors", "White\nCotton"),
   c("- PMA", "+ PMA"),
   #c("- PMA", "Blue\nPolyester"),
   #c("- PMA", "Red\nPolyester"),
@@ -892,6 +964,7 @@ custom_pairs_list <- list(
   #c("+ PMA", "Polyester\nColors"),
   c("- PMA", "Polyester\nColors"),
   c("- PMA", "White\nCotton")
+  #c("- PMA", "White\nCotton\n+ UV")
   #c("- PMA", "Polyester\nColors\n4 Hours"),
   #c("- PMA", "Polyester\nColors\n8 Hours"),
   #c("- PMA", "Polyester\nColors\n16 Hours"),
@@ -911,14 +984,14 @@ dodge_width <- 0.8
 box_width <- 0.6
 box_alpha <- 0.7
 
-title_size <- 30
+title_size <- 25
 axis_x_size <- 20
 axis_y_tick_size <- 18
-axis_y_title_size <- 38
+axis_y_title_size <- 23
 legend_size <- 12
 
 jitter_width_grouped <- 0.2 
-jitter_width_ungrouped <- 0.8
+jitter_width_ungrouped <- 0.3
 point_size <- 4
 point_alpha <- 0.8
 
@@ -980,7 +1053,9 @@ pairwise_results <- switch(test_method,
                                           unlist() %>%
                                           paste(collapse = "-")),
   "rank_lmm" = calculate_rank_lmm_pvalues(plot_data, condition_pairs, group_by_source, 
-                                         pairwise_correction, correction_needed)
+                                         pairwise_correction, correction_needed),
+  "ttest" = calculate_ttest_pvalues(plot_data, condition_pairs, group_by_source,     
+                                    pairwise_correction, correction_needed),  
 )
 
 # Extract results

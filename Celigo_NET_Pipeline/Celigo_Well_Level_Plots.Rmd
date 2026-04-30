@@ -7,7 +7,6 @@ output: html_notebook
 library(ggplate)
 ```
 
-
 ```{r print-platemap-conditions-labelled}
 file_path <- file.choose()
 Condition <- read.csv(file_path, check.names = FALSE)
@@ -19,18 +18,19 @@ p<-plate_plot(
   value = Condition,
   plate_size = 96,
   plate_type = "round",
-    title = "Example Platemap", 
+    title = "NE ELISA", 
   label = Condition,
   show_legend = FALSE,
   label_size = 1.35 ,
   title_size = 11,
   #colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D", "#B33C47", "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
-  colour = c("#3CB371", "#6495ED", "#8A2BE2", "#ED8A2B", "#EDC764", "#2B8AED", "#2BE28A", "#E22B8A", "#48D1CC", "#BA55D3", "#B3ED66", "#D1484D", "#B33C47", "#CC7A33", "#33CC7A", "#66A9AB", "#5A8AC9", "#A966CC", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
+   #colour = c("#3CB371", "#6495ED", "#8A2BE2", "#ED8A2B", "#EDC764", "#2B8AED", "#2BE28A", "#E22B8A", "#48D1CC", "#BA55D3", "#B3ED66", "#D1484D", "#B33C47", "#CC7A33", "#33CC7A", "#66A9AB", "#5A8AC9", "#A966CC", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
+  colour = c("#E22B8A", "#C22577", "#A21F64", "#821951", "#62133E", "#420D2B", "#220718", "#020105", "#48D1CC", "#BA55D3", "#B3ED66", "#D1484D"),
   scale = 6,
   legend_n_row = 5
 )
 
-    ggsave("STAR_Figures-Platemap96.jpg", plot = p, width = 24, height = 16)
+    ggsave("ELISA_Platemap.jpg", plot = p, width = 24, height = 16)
     
     plot(p)
 ```
@@ -52,7 +52,26 @@ p<-plate_plot(
 ) +
     labs(fill = "CitH3\nIndex") 
 
-ggsave("Heatmap_Run15_CitH3Index.png", plot = p, width = 16, height = 12)
+ggsave("Star_Figure_Heatmap2.png", plot = p, width = 16, height = 12)
+print(p)
+```
+
+```{r print-heat-map-labelled-choose}
+p<-plate_plot(
+  data = NET_Data,
+  title = "",
+  position = Well,
+  value = CitH3.Index,
+  label = Condition,
+  label_size = 1.4, 
+  scale = 3.8,
+  plate_size = 96,
+  plate_type = "round",
+  show_legend = TRUE,
+) +
+    labs(fill = "CitH3\nIndex") 
+
+ggsave("Star_Figure_Heatmap2.png", plot = p, width = 16, height = 12)
 print(p)
 ```
 
