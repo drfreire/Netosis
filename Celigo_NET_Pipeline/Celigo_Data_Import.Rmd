@@ -108,7 +108,7 @@ cat("Reading:", basename(file_path), "\n")
 Object_Temp <- fread(file_path, 
                      skip = 17, 
                      header = TRUE,
-                     select = c("Well", "Row", "Column", "Area (µm²)", "Form Factor", 
+                     select = c("Well", "Row", "Column", "X Position (µm)",	"Y Position (µm)", "Area (µm²)", "Form Factor", 
                                "Smoothness", "Aspect Ratio", "Bright Field: Mean Intensity", 
                                "Bright Field: Integrated Intensity", "DAPI: Mean Intensity", 
                                "DAPI: Integrated Intensity", "MPO: Mean Intensity", 
@@ -395,7 +395,7 @@ cat("Select your tabular Celigo .csv file\n")
 
 ##This removes all the extraneous info for the data file that R will create. The original .csv remains unchanged.
 NET_Data_Combined<-read.csv(file.choose(), skip = 15, header = TRUE, check.names = TRUE)%>% ##This is a method allowing you to manually select the .csv
-  select(1:33)%>%
+  select(1:26)%>%
   filter((Row %in% LETTERS[1:8]) &(Column %in% 1:12))
 
 ##This converts the % values into decimals (e.g. 5% becomes 0.05)

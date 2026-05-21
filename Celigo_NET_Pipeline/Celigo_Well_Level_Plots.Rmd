@@ -5,6 +5,7 @@ output: html_notebook
 
 ```{r}
 library(ggplate)
+library(ggplot2)
 ```
 
 ```{r print-platemap-conditions-labelled}
@@ -16,21 +17,29 @@ p<-plate_plot(
   data = Condition,
   position = Well,
   value = Condition,
-  plate_size = 96,
+  plate_size = 24,
   plate_type = "round",
-    title = "NE ELISA", 
+    title = "NET Run 16", 
   label = Condition,
   show_legend = FALSE,
-  label_size = 1.35 ,
+  label_size = 1.7,
   title_size = 11,
-  #colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D", "#B33C47", "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
-   #colour = c("#3CB371", "#6495ED", "#8A2BE2", "#ED8A2B", "#EDC764", "#2B8AED", "#2BE28A", "#E22B8A", "#48D1CC", "#BA55D3", "#B3ED66", "#D1484D", "#B33C47", "#CC7A33", "#33CC7A", "#66A9AB", "#5A8AC9", "#A966CC", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
-  colour = c("#E22B8A", "#C22577", "#A21F64", "#821951", "#62133E", "#420D2B", "#220718", "#020105", "#48D1CC", "#BA55D3", "#B3ED66", "#D1484D"),
-  scale = 6,
+  #colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D",  "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
+   colour = c("#3CB371", 
+              #"#6495ED", 
+              "#8A2BE2", "#ED8A2B", 
+              #"#EDC764", 
+              "#2B8AED", 
+              #"#2BE28A", "#E22B8A", "#48D1CC", "#BA55D3", 
+              "#B3ED66", "#D1484D", 
+              #"#B33C47", 
+              "#CC7A33", "#33CC7A", "#66A9AB", "#5A8AC9", "#A966CC", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
+  #colour = c("#E22B8A", "#C22577", "#A21F64", "#821951", "#62133E", "#420D2B", "#220718", "#020105", "#48D1CC", "#BA55D3", "#B3ED66", "#D1484D"),
+  scale = 6.2,
   legend_n_row = 5
 )
 
-    ggsave("ELISA_Platemap.jpg", plot = p, width = 24, height = 16)
+    ggsave("NET_Run16_Platemap.pdf", plot = p, width = 24, height = 16)
     
     plot(p)
 ```

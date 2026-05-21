@@ -2,7 +2,12 @@
 title: "Celigo Boxplot Script"
 output: html_notebook
 ---
+```{r}
+#install.packages("ggbreak")
+```
+
 ```{r LIBRARIES}
+library(ggbreak)
 library(svglite)
 library(ggplate)
 library(ggplot2)
@@ -602,8 +607,34 @@ if (length(missing_sources) > 0) {
 }
   
   #measure_colors <- get_color(unique_measures, colored_boxes)
-  measure_colors <- sapply(unique_measures, get_color, colored_boxes = colored_boxes)
+  #measure_colors <- sapply(unique_measures, get_color, colored_boxes = colored_boxes)
+  #names(measure_colors) <- unique_measures
+  
+  if (colored_boxes) {
+  # Try to match known patterns
+  measure_colors <- sapply(unique_measures, function(col_name) {
+    dplyr::case_when(
+      grepl("MPO", col_name) ~ "green",
+      grepl("CitH3", col_name) ~ "red",
+      grepl("DAPI", col_name) ~ "blue",
+      grepl("Bright.Field", col_name) ~ "grey",
+      TRUE ~ NA_character_
+    )
+  })
+  
+  # For any unmatched (NA), assign generated colors
+  unmatched <- is.na(measure_colors)
+  if (any(unmatched)) {
+    n_unmatched <- sum(unmatched)
+    generated_colors <- scales::hue_pal()(n_unmatched)
+    measure_colors[unmatched] <- generated_colors
+  }
+  
   names(measure_colors) <- unique_measures
+} else {
+  measure_colors <- rep("white", length(unique_measures))
+  names(measure_colors) <- unique_measures
+}
   
   use_patterns <- length(unique_measures) > 1 && any(duplicated(measure_colors))
   
@@ -843,10 +874,34 @@ add_brackets_ungrouped <- function(p, plot_data, overall_pairwise, condition_pai
 # === CHUNK 7: FINALIZATION & OUTPUT FUNCTIONS ===
 
 finalize_plot <- function(p, metadata, aesthetics, title_size, axis_x_size, 
-                         axis_y_tick_size, axis_y_title_size, legend_position, legend_size) {
+                         axis_y_tick_size, axis_y_title_size, legend_position, legend_size,
+                         use_axis_break, break_ranges, break_scale, break_space,
+                         background_fill, panel_border, background_color, border_color) {
   
   y_label <- if(length(aesthetics$unique_measures) > 1) "" else metadata$label_y
   
+  # Apply axis breaks if enabled
+if (use_axis_break && length(break_ranges) > 0) {
+    for (break_range in break_ranges) {
+      p <- p + scale_y_break(c(break_range[1], break_range[2]), 
+                            scales = break_scale,
+                            space = break_space)
+    }
+  # Add slash marks at break location
+  for (break_range in break_ranges) {
+    #break_y <- break_range[1]  # Position at bottom of break
+    p <- p + 
+      annotate("segment", x = -Inf, xend = -Inf, 
+               y = break_range[1], yend = break_range[1] * 1.01,
+               color = "black", linewidth = 1, linetype = "solid") +
+      annotate("segment", x = -Inf, xend = -Inf, 
+               y = break_range[2], yend = break_range[2] * .999 ,
+               color = "black", linewidth = 1, linetype = "solid")
+      #annotate("text", x = -Inf, y = break_y, label = "//", 
+       #        hjust = 1.2, vjust = 0.5, size = 12, angle = 60)
+  }
+}
+
   p <- p +
     labs(x = "", y = y_label, title = metadata$wrapped_title) +
     theme_classic() +
@@ -856,7 +911,9 @@ finalize_plot <- function(p, metadata, aesthetics, title_size, axis_x_size,
       axis.text.y = element_text(size = axis_y_tick_size),
       axis.title.y = element_text(size = axis_y_title_size),
       legend.position = legend_position,
-      legend.text = element_text(size = legend_size)
+      legend.text = element_text(size = legend_size),
+      panel.background = if(background_fill) element_rect(fill = background_color, color = NA) else element_blank(),
+      panel.border = if(panel_border) element_rect(fill = NA, color = border_color, linewidth = 1) else element_blank()
     )
   
   return(p)
@@ -891,6 +948,7 @@ NET_Data_Combined <- NET_Data_Combined %>%
 ```
 
 ```{r edits}
+#NET_Data_Combined$Percent.Dead <- NET_Data_Combined$Percent.Dead * 100
 #NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
 
 #class(NET_Data_Combined$Total.Count)
@@ -905,36 +963,34 @@ NET_Data_Combined <- NET_Data_Combined %>%
 #aesthetics$shape_values["Run 8"] <- 18
 #aesthetics$shape_values["Run 9"] <- 19
 # ========================
-```
+```  
 
 ```{r MAIN SCRIPT}
 # === USER SETTINGS ===
 runs_to_plot <- c(
-                  "Run 7",
-                  #"Run 8",
-                  #"Run 9",
-                  "Run 10",
-                  #"Run 11",
-                  #"Run 12"
-                  #"Run 13",
-                  "Run 14",
-                  "Run 15"
+                  "CHO LD"
                   )
 conditions_to_plot <- c(
-                        "- PMA",
-                        "+ PMA",
-                        "Polyester\nColors",
-                        "White\nCotton"
+                       "100%\nF12",
+                       "0.1% DMSO\n(0.014M)",
+                       "0.36µM\nDBP",
+                       "70µM\nDBP",
+                       "600µM\nDBP",
+                       "4.2M\nDMSO"
                         )
-                               #Set to c("") to plot all possible conditions
-measure_to_plot <- c("CitH3.Min.Max.Normalized")
-group_by_source <- FALSE 
-normalize <- FALSE                          #Specifically z-score, min-max norm is created as a column "CitH3.Min.Max.Normalized
-test_method <- "ttest"                      # Options: "wilcoxon", "ttest", "art_lmm", "rank_lmm", "none"
-pairwise_correction <- "none"                    # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
-use_custom_pairs <- TRUE         
-colored_boxes <- FALSE
-use_custom_title <- FALSE
+                               # Set to c("") to plot all possible conditions
+measure_to_plot <- c("Percent.Dead")
+
+group_by_source <- FALSE
+normalize <- FALSE                          # Specifically z-score, min-max norm is created as a column "CitH3.Min.Max.Normalized"
+test_method <- "none"                      # Options: "wilcoxon", "ttest", "art_lmm", "rank_lmm", "none"
+pairwise_correction <- "none"               # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
+use_custom_pairs <- TRUE                    # If FALSE everything gets compared to everything, custom pair list below
+colored_boxes <- FALSE                      # Color fill for boxes
+use_custom_title <- TRUE
+use_axis_break <- TRUE                      # If TRUE, adjust settings below
+background_fill <- TRUE
+panel_border <- TRUE
 
 # Save settings
 file_type <- ".png"
@@ -942,7 +998,7 @@ save_width <- 14
 save_height <- 10
 
 # Bracket settings 
-bracket_coefficient <- 1.8                  # Key Bracket Spacing Variable
+bracket_coefficient <- 0.8                  # Key Bracket Spacing Variable
 bracket_settings <- list(
   y_start_mult = 1.15,
   step_div = 10,
@@ -952,33 +1008,25 @@ bracket_settings <- list(
   text_sizes = c(5, 5, 6)
 )
 
+# Axis break settings
+break_ranges <- list(c(6, 60)) # List of break ranges: list(c(start1, end1), c(start2, end2))
+break_scale <- 1                # Relative size of broken sections
+break_space <- 1
+
 # Custom comparison pairs (used if use_custom_pairs = TRUE)
 custom_pairs_list <- list(
-  #c("Polyester\nColors", "White\nCotton"),
-  c("- PMA", "+ PMA"),
-  #c("- PMA", "Blue\nPolyester"),
-  #c("- PMA", "Red\nPolyester"),
-  #c("- PMA", "Virgin\nPolyester"),
-  #c("- PMA\nNo Perm", "+ PMA\nNo Perm")
-  #c("- PMA", "Leachate\n50µL"),
-  #c("+ PMA", "Polyester\nColors"),
-  c("- PMA", "Polyester\nColors"),
-  c("- PMA", "White\nCotton")
-  #c("- PMA", "White\nCotton\n+ UV")
-  #c("- PMA", "Polyester\nColors\n4 Hours"),
-  #c("- PMA", "Polyester\nColors\n8 Hours"),
-  #c("- PMA", "Polyester\nColors\n16 Hours"),
-  #c("- PMA", "Polyester\nColors + UV\n4 Hours"),
-  #c("- PMA", "Polyester\nColors + UV\n8 Hours"),
-  #c("- PMA", "Polyester\nColors + UV\n16 Hours"),
-  #c("- PMA", "MP\nStandards\n16 Hours")
-  #c("- PMA", "Polyester\nColors\nHeat Killed"),
-  #c("- PMA", "1"),
-  #c("- PMA", "2")
+  #c("- PMA", "+ PMA"),
+  #c("- PMA", "Polyester\nColors"),
+  #c("- PMA", "White\nCotton")
+  c("100%\nF12", "0.1% DMSO\n(0.014M)"),
+  c("100%\nF12", "0.36µM\nDBP"),
+  c("100%\nF12", "70µM\nDBP"),
+  c("100%\nF12", "600µM\nDBP"),
+  c("100%\nF12", "4.2M\nDMSO")
 )
 
 # Plot settings
-custom_title <- "Example Boxplot"
+custom_title <- "CHO Live/Dead"
 
 dodge_width <- 0.8
 box_width <- 0.6
@@ -989,6 +1037,9 @@ axis_x_size <- 20
 axis_y_tick_size <- 18
 axis_y_title_size <- 23
 legend_size <- 12
+
+background_color <- "gray"
+border_color <- "black"
 
 jitter_width_grouped <- 0.2 
 jitter_width_ungrouped <- 0.3
@@ -1107,7 +1158,9 @@ if (group_by_source) {
 
 # 6. Finalize and save
 p <- finalize_plot(p, metadata, aesthetics, title_size, axis_x_size,
-                  axis_y_tick_size, axis_y_title_size, legend_position, legend_size)
+                  axis_y_tick_size, axis_y_title_size, legend_position, legend_size,
+                  use_axis_break, break_ranges, break_scale, break_space,
+                  background_fill, panel_border, background_color, border_color)
 
 plot_name <- save_and_display(p, metadata, test_method, pairwise_correction, norm_state, file_type, save_width, save_height)
 ```

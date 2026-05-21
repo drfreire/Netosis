@@ -1,0 +1,189 @@
+---
+title: "Celigo_Boxplot-streamlined"
+output: html_document
+---
+
+```{r boxplot-prep}
+# === ------------------------ ===
+# === Run Once Before Plotting ===
+# === ------------------------ ===
+
+# === LIBRARIES ===
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(data.table)
+library(rstudioapi)
+
+# === DATA IMPORT ===
+runs_included = 1
+
+read_multiple_files <- function(n_files = runs_included) {
+  data_list <- list()
+
+  for(i in 1:n_files) {
+    cat("Selecting file", i, "of", n_files, "\n")
+    
+    file_path <- file.choose()
+    data <- read.csv(file_path, header = TRUE, check.names = TRUE) 
+    
+    data_list[[i]] <- data
+    
+  }
+
+  combined_data <- do.call(rbind, data_list)
+  return(combined_data)
+}
+
+db <- read_multiple_files(runs_included)
+
+setDT(db)
+
+# === DATA PREPARATION ===
+prepare_plot_data <- function(raw_data, runs, Location, measures) {
+  plot_data <- raw_data %>%
+    mutate(Location = factor(Location, levels = Location)) %>%
+    pivot_longer(cols = all_of(measures), names_to = "Measure", values_to = "value")
+  
+  return(plot_data)
+}
+
+```
+
+``` {r plot-chunk}
+# === MAIN SCRIPT ===
+
+# User settings
+locations_to_plot <- c("LJ", "Miramar")
+measure_to_plot <- c("Microplastic.Concentration")
+
+# Prepare data
+plot_data <- prepare_plot_data(db, locations_to_plot, measure_to_plot)
+
+# Create plot
+p <- ggplot(plot_data, aes(x = Location, y = value)) +
+  geom_boxplot(width = 0.6, alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2.5, alpha = 0.8) +
+  labs(x = "", y = measure_to_plot, 
+       title = paste0(runs_to_plot, " ", measure_to_plot)) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 16, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 14),
+    axis.title.y = element_text(size = 16)
+  )
+
+# Display and save
+print(p)
+ggsave("test.png", plot = p, width = 8, height = 6)
+cat("\nPlot saved to: boxplot.png\n")
+```
+
+```{r}
+# === DATA IMPORT ===
+runs_included = 1
+
+read_multiple_files <- function(n_files = runs_included) {
+  data_list <- list()
+
+  for(i in 1:n_files) {
+    cat("Selecting file", i, "of", n_files, "\n")
+    
+    file_path <- file.choose()
+    data <- read.csv(file_path, header = TRUE, check.names = TRUE) 
+    
+    data_list[[i]] <- data
+    
+  }
+
+  combined_data <- do.call(rbind, data_list)
+  return(combined_data)
+}
+
+db <- read_multiple_files(runs_included)
+
+setDT(db)
+```
+
+
+```{r}
+# === DATA PREPARATION ===
+prepare_plot_data <- function(raw_data, locations, measures) {
+  plot_data <- raw_data %>%
+    # Filter for the desired locations
+    filter(Location %in% locations) %>%
+    # Use the unique locations vector for levels
+    mutate(Location = factor(Location, levels = locations)) %>%
+    pivot_longer(cols = all_of(measures), 
+                 names_to = "Measure", 
+                 values_to = "value")
+  
+  return(plot_data)
+}
+```
+
+```{r}
+# === DATA PREPARATION ===
+prepare_plot_data <- function(raw_data, locations, measures) {
+  plot_data <- raw_data %>%
+    # Filter for the desired measures
+    filter(Location %in% locations) %>%
+    # Use the unique locations vector for levels
+    mutate(Location = factor(Location, levels = locations)) %>%
+    pivot_longer(cols = all_of(measures), 
+                 names_to = "Measure", 
+                 values_to = "value")
+  
+  return(plot_data)
+}
+```
+
+
+```{r}
+# === MAIN SCRIPT ===
+locations_to_plot <- c("Saliva FC Miramar LJ", "Air FC Miramar LJ")
+measure_to_plot <- c("Microfiber.Concentration")
+
+# Ensure call matches the revised signature (raw_data, locations, measures)
+plot_data <- prepare_plot_data(db, locations_to_plot, measure_to_plot)
+
+fixedtext <- gsub("\\.", " ", measure_to_plot)
+
+# 1. Calculate per-location counts
+counts <- plot_data %>%
+  group_by(Location) %>%
+  summarise(n = n(), .groups = 'drop')
+
+# 2. Construct the multiline string
+label_text <- paste(
+  c("N", paste(as.character(counts$Location), counts$n, sep = " : ")), 
+  collapse = "\n"
+)
+
+# 3. Create plot with annotation
+p <- ggplot(plot_data, aes(x = Location, y = value)) +
+  #geom_boxplot(width = 0.6, alpha = 0.7, outlier.shape = NA) +
+  #geom_jitter(width = 0.2, size = 2.5, alpha = 0.8) +
+  geom_col(width = 0.6, alpha = 0.7, outlier.shape = NA) +
+  # Annotation placed to the right of the plot area
+  annotate("text", x = Inf, y = mean(range(plot_data$value)), 
+           label = label_text, hjust = 0, lineheight = 1.2, fontface = "bold") +
+  labs(x = "", y = paste0(fixedtext),
+       title = paste0(fixedtext)) +
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(size = 14),
+    plot.title = element_text(size = 18, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
+    # Expand right margin to accommodate the text
+    plot.margin = margin(5, 80, 5, 5) 
+  ) +
+  # Prevents the annotation from being cut off
+  coord_cartesian(clip = "off"
+  )
+
+print(p)
+ggsave("MP_Saliva5.png", plot = p, width = 8, height = 6)
+```
+
