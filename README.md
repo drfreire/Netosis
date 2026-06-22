@@ -10,6 +10,7 @@ This repository provides access to the scripts and tools used by the Freire lab 
 ### Contents
 
 - Introduction
+- Cell Profiler Classifier
 - Scripts
 - Demos
 
