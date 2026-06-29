@@ -8,21 +8,23 @@ library(ggplate)
 library(ggplot2)
 ```
 
-```{r print-platemap-conditions-labelled}
+```{r print-platemap-conditions-labelled-IMPORT}
 file_path <- file.choose()
 Condition <- read.csv(file_path, check.names = FALSE)
+```
 
+```{r print it}
 Condition$Condition <- gsub("\\\\n", "\n", Condition$Condition)
 p<-plate_plot(
   data = Condition,
   position = Well,
   value = Condition,
-  plate_size = 24,
+  plate_size = 96,
   plate_type = "round",
-    title = "NET Run 16", 
+    title = "ChemR23 DBP Ca5 Run 4", 
   label = Condition,
   show_legend = FALSE,
-  label_size = 1.7,
+  label_size = 1.1,
   title_size = 11,
   #colour = c("#3CB371", "#6495ED", "#8A2BE2", "#EDC764", "#2BE28A", "#48D1CC",  "#BA55D3", "#D1484D",  "#CC7A33", "#66A9AB", "#5A8AC9", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
    colour = c("#3CB371", 
@@ -35,11 +37,11 @@ p<-plate_plot(
               #"#B33C47", 
               "#CC7A33", "#33CC7A", "#66A9AB", "#5A8AC9", "#A966CC", "#99CC66", "#CC6699", "#669C94", "#B35A66", "#9B84B3", "#CC7266"),
   #colour = c("#E22B8A", "#C22577", "#A21F64", "#821951", "#62133E", "#420D2B", "#220718", "#020105", "#48D1CC", "#BA55D3", "#B3ED66", "#D1484D"),
-  scale = 6.2,
+  scale = 5.7,
   legend_n_row = 5
 )
 
-    ggsave("NET_Run16_Platemap.pdf", plot = p, width = 24, height = 16)
+    ggsave("Ca5_Run5.png", plot = p, width = 24, height = 16)
     
     plot(p)
 ```
@@ -47,21 +49,21 @@ p<-plate_plot(
 ```{r print-heat-map-labelled}
 p<-plate_plot(
   data = NET_Data_Combined %>% 
-    filter(Source == "Run 15",
+    filter(Source == "Ca5",
            ),
-  title = "NET Run 15",
+  title = "Intracellular Calcium Signalling\n20 Min",
   position = Well,
-  value = CitH3.Index,
+  value = RFU,
   label = Condition,
-  label_size = 1.4, 
-  scale = 3.8,
-  plate_size = 96,
+  label_size = 2, 
+  scale = 4.2,
+  plate_size = 24,
   plate_type = "round",
   show_legend = TRUE,
 ) +
-    labs(fill = "CitH3\nIndex") 
+    labs(fill = "RFU") 
 
-ggsave("Star_Figure_Heatmap2.png", plot = p, width = 16, height = 12)
+ggsave("DBP-CHO-Ca5_2.png", plot = p, width = 16, height = 12)
 print(p)
 ```
 

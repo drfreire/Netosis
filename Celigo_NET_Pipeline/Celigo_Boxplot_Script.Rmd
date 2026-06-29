@@ -30,7 +30,7 @@ library(RColorBrewer)
 
 ```{r DATA IMPORT}
 # Specify how many runs will be included for analysis
-runs_included = 10
+runs_included = 1
 
 # Read multiple files and name them for graph legends etc.
 read_multiple_files <- function(n_files = runs_included) {
@@ -47,7 +47,6 @@ read_multiple_files <- function(n_files = runs_included) {
     # Select data
     file_path <- file.choose()
     data <- read.csv(file_path, skip = 15, header = TRUE, check.names = TRUE) %>%
-      dplyr::select(1:39) %>%
       filter((Row %in% LETTERS[1:8]) & (Column %in% 1:12))
     
     # Select, read, and add Condition to data as a new column
@@ -78,10 +77,28 @@ NET_Data_Combined$Condition <- gsub("\\\\n", "\n", NET_Data_Combined$Condition)
 names(NET_Data_Combined) <- gsub("^X\\.\\.", "%", names(NET_Data_Combined))
 NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
 
-# Create index columns
-NET_Data_Combined$MPO.Index <- as.numeric(NET_Data_Combined$'%MPO') * as.numeric(NET_Data_Combined$'AVG.MPO.Mean.Intensity')
-NET_Data_Combined$CitH3.Index <- as.numeric(NET_Data_Combined$'%CitH3') * as.numeric(NET_Data_Combined$'AVG.CitH3.Mean.Intensity')
-NET_Data_Combined$DAPI.Index <- as.numeric(NET_Data_Combined$'%DAPI') * as.numeric(NET_Data_Combined$'AVG.DAPI.Mean.Intensity')
+# Create index columns only if they exist
+if (all(c('%MPO', 'AVG.MPO.Mean.Intensity') %in% names(NET_Data_Combined))) {
+  NET_Data_Combined$MPO.Index <- as.numeric(NET_Data_Combined$'%MPO') * as.numeric(NET_Data_Combined$'AVG.MPO.Mean.Intensity')
+}
+if (all(c('%CitH3', 'AVG.CitH3.Mean.Intensity') %in% names(NET_Data_Combined))) {
+  NET_Data_Combined$CitH3.Index <- as.numeric(NET_Data_Combined$'%CitH3') * as.numeric(NET_Data_Combined$'AVG.CitH3.Mean.Intensity')
+}
+if (all(c('%DAPI', 'AVG.DAPI.Mean.Intensity') %in% names(NET_Data_Combined))) {
+  NET_Data_Combined$DAPI.Index <- as.numeric(NET_Data_Combined$'%DAPI') * as.numeric(NET_Data_Combined$'AVG.DAPI.Mean.Intensity')
+}
+
+# Min-max norm - only if CitH3.Index exists
+if ('CitH3.Index' %in% names(NET_Data_Combined)) {
+  NET_Data_Combined <- NET_Data_Combined %>%
+    group_by(Source) %>%
+    mutate(
+      min_val = mean(CitH3.Index[Condition == "- PMA"], na.rm = TRUE),
+      max_val = mean(CitH3.Index[Condition == "+ PMA"], na.rm = TRUE),
+      CitH3.Min.Max.Normalized = (CitH3.Index - min_val) / (max_val - min_val)
+    ) %>%
+    ungroup()
+}
 
 # Make sure it's a data table
 setDT(NET_Data_Combined)
@@ -529,6 +546,104 @@ calculate_ttest_pvalues <- function(plot_data, condition_pairs, group_by_source,
     return(list(type = "ungrouped", data = overall_pairwise))
   }
 }
+
+calculate_anova1_pvalues <- function(plot_data, condition_pairs, group_by_source, pairwise_correction, correction_needed) {
+  
+  # TukeyHSD strictly requires the independent variable to be a factor
+  plot_data$Condition <- as.factor(plot_data$Condition)
+  
+  if (group_by_source) {
+    run_comparisons <- plot_data %>%
+      group_by(Source, Measure) %>%
+      group_modify(~ {
+        unique_conditions <- unique(.x$Condition)
+        
+        # ANOVA requires at least 2 conditions
+        if (length(unique_conditions) >= 2) {
+          
+          # 1. Run ANOVA and Tukey
+          model <- aov(value ~ Condition, data = .x)
+          tukey_res <- TukeyHSD(model)$Condition
+          
+          results <- data.frame()
+          
+          # 2. Extract specific requested pairs from the Tukey matrix
+          for (pair in condition_pairs) {
+            c1 <- as.character(pair[1])
+            c2 <- as.character(pair[2])
+            
+            # Tukey names pairs as "Group2-Group1", so we check both orientations
+            name1 <- paste(c1, c2, sep = "-")
+            name2 <- paste(c2, c1, sep = "-")
+            
+            if (name1 %in% rownames(tukey_res)) {
+              p_val <- tukey_res[name1, "p adj"]
+            } else if (name2 %in% rownames(tukey_res)) {
+              p_val <- tukey_res[name2, "p adj"]
+            } else {
+              p_val <- NA # Fallback if pair isn't valid
+            }
+            
+            results <- rbind(results, 
+                             data.frame(cond1 = c1,
+                                        cond2 = c2,
+                                        p_value = p_val,
+                                        p_adjusted = p_val)) # Tukey is natively adjusted
+          }
+          
+          # We bypass apply_pvalue_correction() here because TukeyHSD 
+          # inherently performs family-wise error rate correction.
+          results
+          
+        } else {
+          data.frame(cond1 = character(), cond2 = character(), p_value = numeric(), p_adjusted = numeric())
+        }
+      }) %>%
+      ungroup()
+    
+    cat("\n=== P-values for each Source-Measure combination (1-Way ANOVA + Tukey HSD) ===\n")
+    print(run_comparisons[, c("Source", "Measure", "cond1", "cond2", "p_adjusted")])
+    return(list(type = "grouped", data = run_comparisons))
+    
+  } else {
+    
+    # Ungrouped logic
+    overall_pairwise <- data.frame()
+    unique_conditions <- unique(plot_data$Condition)
+    
+    if (length(unique_conditions) >= 2) {
+      model <- aov(value ~ Condition, data = plot_data)
+      tukey_res <- TukeyHSD(model)$Condition
+      
+      for (pair in condition_pairs) {
+        c1 <- as.character(pair[1])
+        c2 <- as.character(pair[2])
+        
+        name1 <- paste(c1, c2, sep = "-")
+        name2 <- paste(c2, c1, sep = "-")
+        
+        if (name1 %in% rownames(tukey_res)) {
+          p_val <- tukey_res[name1, "p adj"]
+        } else if (name2 %in% rownames(tukey_res)) {
+          p_val <- tukey_res[name2, "p adj"]
+        } else {
+          p_val <- NA
+        }
+        
+        overall_pairwise <- rbind(overall_pairwise, 
+                                  data.frame(cond1 = c1, 
+                                             cond2 = c2,
+                                             p_value = p_val,
+                                             p_adjusted = p_val))
+      }
+    }
+    
+    cat("\n=== P-values (Tukey HSD adjusted - 1-Way ANOVA) ===\n")
+    print(overall_pairwise[, c("cond1", "cond2", "p_adjusted")])
+    
+    return(list(type = "ungrouped", data = overall_pairwise))
+  }
+}
 ```
 
 ```{r 4-METADATA & AESTHETICS FUNCTIONS}
@@ -539,7 +654,12 @@ generate_metadata <- function(plot_data, group_by_source, normalize, test_method
                              conditions_to_plot, use_custom_title, custom_title) {
   
   norm_state <- if (normalize) "Z.score" else ""
+# run_numbers <- sort(as.numeric(gsub("Run ", "", unique(plot_data$Source))))
+  if (any(grepl("[0-9]", unique(plot_data$Source)))) {
   run_numbers <- sort(as.numeric(gsub("Run ", "", unique(plot_data$Source))))
+} else {
+  run_numbers <- sort(gsub(" ", "", unique(plot_data$Source)))
+}
   run_string <- paste(run_numbers, collapse = "&")
   if (group_by_source) {
     run_string <- paste0(run_string, "_split")
@@ -554,7 +674,7 @@ generate_metadata <- function(plot_data, group_by_source, normalize, test_method
   measure_string <- gsub("%", "percent", measure_to_plot)
   measure_string_collapsed <- paste(measure_string, collapse = " & ")
   
-  test_name_map <- c("wilcoxon" = "Wilcoxon", "art_lmm" = "ART-LMM", "rank_lmm" = "Rank-LMM", "ttest" = "t-test", "none" = "")
+  test_name_map <- c("wilcoxon" = "Wilcoxon", "art_lmm" = "ART-LMM", "rank_lmm" = "Rank-LMM", "ttest" = "t-test", "anova1" = "ANOVA", "none" = "")
   title_test_name <- if (correction_needed) {
     paste0("(", test_name_map[test_method], " (", pairwise_correction, "))")
   } else {
@@ -662,91 +782,182 @@ if (length(missing_sources) > 0) {
 
 create_base_plot_grouped <- function(plot_data, aesthetics, dodge_width, box_width, 
                                     box_alpha, box_outlier_shape, point_size, point_alpha,
-                                    jitter_width, pattern_settings) {
+                                    jitter_width, pattern_settings, outline_width) {
   
   p <- ggplot(plot_data, aes(x = Condition, y = value))
   
+  # Control legend visibility
+  show_run_legend <- length(aesthetics$unique_sources) > 1
+  show_measure_legend <- length(aesthetics$unique_measures) > 1
+  
+  # Create linetype scale for sources
+  linetype_values <- c("solid", "dashed", "dotted", "dotdash", "longdash", "twodash")[1:length(aesthetics$unique_sources)]
+  names(linetype_values) <- aesthetics$unique_sources
+  
   if (aesthetics$use_patterns) {
+    pattern_args <- list(
+      mapping = aes(fill = Measure, pattern = Measure, linetype = Source, 
+                   group = interaction(Condition, Source, Measure)),
+      pattern_fill = pattern_settings$fill,
+      pattern_angle = pattern_settings$angle,
+      pattern_density = pattern_settings$density,
+      pattern_spacing = pattern_settings$spacing,
+      pattern_key_scale_factor = pattern_settings$key_scale,
+      position = position_dodge(dodge_width),
+      width = box_width,
+      alpha = box_alpha,
+      color = "black",
+      linewidth = outline_width
+    )
+    
+    if (plot_type == "boxplot") {
+      pattern_func <- geom_boxplot_pattern
+      pattern_args$outlier.shape <- box_outlier_shape
+    } else if (plot_type == "colplot") {
+      pattern_func <- stat_summary
+      pattern_args$fun <- mean
+      pattern_args$geom <- "col_pattern"
+    }
+    
     p <- p + 
-      geom_boxplot_pattern(
-        aes(fill = Measure, pattern = Measure, group = interaction(Condition, Source, Measure)),
-        pattern_fill = pattern_settings$fill,
-        pattern_angle = pattern_settings$angle,
-        pattern_density = pattern_settings$density,
-        pattern_spacing = pattern_settings$spacing,
-        pattern_key_scale_factor = pattern_settings$key_scale,
-        position = position_dodge(dodge_width),
-        width = box_width,
-        alpha = box_alpha,
-        outlier.shape = box_outlier_shape
-      ) +
-      scale_pattern_manual(values = aesthetics$pattern_values, name = "Measure") +
-      scale_fill_manual(values = aesthetics$measure_colors, name = "Measure")
+      do.call(pattern_func, pattern_args) +
+      scale_pattern_manual(values = aesthetics$pattern_values, 
+                          guide = if(show_measure_legend) "legend" else "none",
+                          name = "Measure") 
+    
   } else {
-    p <- p + 
-      geom_boxplot(
-        aes(fill = Measure, group = interaction(Condition, Source, Measure)),
+    aes_mapping <- aes(fill = Measure, linetype = Source, 
+                      group = interaction(Condition, Source, Measure))
+    
+    if (plot_type == "boxplot") {
+      geom_func <- geom_boxplot
+      geom_args <- list(
+        mapping = aes_mapping,
         position = position_dodge(dodge_width),
         width = box_width,
         alpha = box_alpha,
-        outlier.shape = box_outlier_shape
-      ) +
-      scale_fill_manual(
-        values = aesthetics$measure_colors,
-        guide = if(length(aesthetics$unique_measures) == 1) "none" else "legend",
-        name = "Measure"
+        outlier.shape = box_outlier_shape,
+        color = "black",
+        linewidth = outline_width
       )
+    } else if (plot_type == "colplot") {
+      geom_func <- stat_summary
+      geom_args <- list(
+        mapping = aes_mapping,
+        fun = mean,
+        geom = "col",
+        position = position_dodge(dodge_width),
+        width = box_width,
+        alpha = box_alpha,
+        color = "black",
+        linewidth = outline_width
+      )
+    }
+    
+    p <- p + do.call(geom_func, geom_args)
   }
   
   p <- p +
-    geom_point(
-      aes(shape = Source, group = interaction(Condition, Source, Measure)),
-      position = position_jitterdodge(
-        jitter.width = jitter_width,
-        dodge.width = dodge_width
-      ),
-      size = point_size, 
-      alpha = point_alpha
-    ) +
-    scale_shape_manual(
-      values = aesthetics$shape_values, 
-      labels = aesthetics$source_labels, 
-      name = "Run"
-    )
-  
-  return(p)
+  geom_point(
+    aes(shape = Source, group = interaction(Condition, Source, Measure)),
+    position = position_jitterdodge(
+      jitter.width = jitter_width,
+      dodge.width = dodge_width
+    ),
+    size = point_size, 
+    alpha = point_alpha,
+    show.legend = c(shape = show_run_legend, fill = FALSE, pattern = FALSE)
+  ) +
+  scale_fill_manual(
+    values = aesthetics$measure_colors,
+    guide = if(show_measure_legend) "legend" else "none",
+    name = "Measure"
+  ) +
+  scale_shape_manual(
+    values = aesthetics$shape_values, 
+    labels = aesthetics$source_labels, 
+    name = "Run",
+    guide = if(show_run_legend) "legend" else "none"
+  ) +
+  scale_linetype_manual(
+    values = linetype_values,
+    name = "",
+    guide = if(show_run_legend) "legend" else "none"
+  )
+
+return(p)
 }
 
 create_base_plot_ungrouped <- function(plot_data, aesthetics, dodge_width, box_width,
-                                      box_alpha, box_outlier_shape, point_size, point_alpha,
-                                      jitter_width, pattern_settings) {
+                                       box_alpha, box_outlier_shape, point_size, point_alpha,
+                                       jitter_width, pattern_settings) {
   
   p <- ggplot(plot_data, aes(x = Condition, y = value, fill = Measure))
   
   if (aesthetics$use_patterns) {
+    
+    pattern_args <- list(
+      mapping = aes(pattern = Measure),
+      pattern_fill = pattern_settings$fill,
+      pattern_angle = pattern_settings$angle,
+      pattern_density = pattern_settings$density,
+      pattern_spacing = pattern_settings$spacing,
+      pattern_key_scale_factor = pattern_settings$key_scale,
+      position = position_dodge(dodge_width),
+      width = box_width,
+      alpha = box_alpha,
+      color = "black",
+      linewidth = 0.8
+    )
+    
+    if (plot_type == "boxplot") {
+      pattern_func <- match.fun("geom_boxplot_pattern")
+      pattern_args$outlier.shape <- box_outlier_shape
+      
+    } else if (plot_type == "colplot") {
+      pattern_func <- match.fun("stat_summary")
+      pattern_args$fun <- "mean"
+      pattern_args$geom <- "col_pattern" 
+    }
+    
     p <- p + 
-      geom_boxplot_pattern(
-        aes(pattern = Measure),
-        pattern_fill = pattern_settings$fill,
-        pattern_angle = pattern_settings$angle,
-        pattern_density = pattern_settings$density,
-        pattern_spacing = pattern_settings$spacing,
-        pattern_key_scale_factor = pattern_settings$key_scale,
-        position = position_dodge(dodge_width),
-        width = box_width,
-        alpha = box_alpha,
-        outlier.shape = box_outlier_shape
-      ) +
+      do.call(pattern_func, pattern_args) +
       scale_pattern_manual(values = aesthetics$pattern_values, name = "Measure")
+    
   } else {
-    p <- p + 
-      geom_boxplot(
+    
+    aes_mapping <- aes(fill = Measure, group = interaction(Condition, Source, Measure))
+    
+    if (plot_type == "boxplot") {
+      geom_func <- geom_boxplot
+      geom_args <- list(
+        mapping = aes_mapping,
         position = position_dodge(dodge_width),
         width = box_width,
         alpha = box_alpha,
-        outlier.shape = box_outlier_shape
-      ) 
+        outlier.shape = box_outlier_shape,
+        linewidth = outline_width
+      )
+      
+    } else if (plot_type == "colplot") {
+      geom_func <- stat_summary
+      geom_args <- list(
+        mapping = aes_mapping,
+        fun = mean,
+        geom = "col",
+        position = position_dodge(dodge_width),
+        width = box_width,
+        alpha = box_alpha,
+        color = "black",
+        linewidth = outline_width
+      )
+    }
+    
+    p <- p + do.call(geom_func, geom_args) 
   }
+  
+  # variable to control the run legend
+  show_run_legend <- length(aesthetics$unique_sources) > 1
   
   p <- p +
     geom_point(
@@ -758,21 +969,27 @@ create_base_plot_ungrouped <- function(plot_data, aesthetics, dodge_width, box_w
       ),
       size = point_size, 
       alpha = point_alpha,
-      show.legend = c(shape = TRUE, fill = FALSE, pattern = FALSE)
+      show.legend = c(shape = show_run_legend, color = show_run_legend, fill = FALSE, pattern = FALSE)
     ) +
-    scale_color_manual(values = aesthetics$active_source_colors, guide = "none") +
     scale_fill_manual(
       values = aesthetics$measure_colors,
       guide = if(length(aesthetics$unique_measures) == 1) "none" else "legend",
       name = "Measure"
     ) +
+
+    scale_color_manual(
+      values = aesthetics$active_source_colors, 
+      name = "Run",
+      guide = if(show_run_legend) "legend" else "none"
+    ) +
     scale_shape_manual(
       values = aesthetics$shape_values, 
       labels = aesthetics$source_labels, 
-      name = "Run"
-    ) +
-    guides(shape = guide_legend(override.aes = list(color = aesthetics$active_source_colors))
-           )
+      name = "Run",
+
+      guide = if(show_run_legend) guide_legend(override.aes = list(color = aesthetics$active_source_colors)) else "none"
+    )
+
   
   return(p)
 }
@@ -876,9 +1093,24 @@ add_brackets_ungrouped <- function(p, plot_data, overall_pairwise, condition_pai
 finalize_plot <- function(p, metadata, aesthetics, title_size, axis_x_size, 
                          axis_y_tick_size, axis_y_title_size, legend_position, legend_size,
                          use_axis_break, break_ranges, break_scale, break_space,
-                         background_fill, panel_border, background_color, border_color) {
+                         background_fill, panel_border, background_color, border_color,
+                         set_tick_range, tick_range_min, tick_range_max, tick_scale) {
   
-  y_label <- if(length(aesthetics$unique_measures) > 1) "" else metadata$label_y
+  y_label <- case_when(
+  use_custom_y == TRUE                     ~ custom_y,
+  length(aesthetics$unique_measures) > 1   ~ "",
+  TRUE                                     ~ metadata$label_y
+)
+  
+      # Apply manual tick range if enabled
+if (set_tick_range) {
+  p <- p + 
+    scale_y_continuous(
+      breaks = seq(tick_range_min, tick_range_max, by = tick_scale),
+      expand = expansion(mult = c(0, 0.05))
+    ) +
+    coord_cartesian(ylim = c(tick_range_min, NA))
+}
   
   # Apply axis breaks if enabled
 if (use_axis_break && length(break_ranges) > 0) {
@@ -887,9 +1119,9 @@ if (use_axis_break && length(break_ranges) > 0) {
                             scales = break_scale,
                             space = break_space)
     }
+  
   # Add slash marks at break location
   for (break_range in break_ranges) {
-    #break_y <- break_range[1]  # Position at bottom of break
     p <- p + 
       annotate("segment", x = -Inf, xend = -Inf, 
                y = break_range[1], yend = break_range[1] * 1.01,
@@ -919,15 +1151,16 @@ if (use_axis_break && length(break_ranges) > 0) {
   return(p)
 }
 
-save_and_display <- function(p, metadata, test_method, pairwise_correction, norm_state, file_type, save_width, save_height) {
+save_and_display <- function(p, metadata, test_method, pairwise_correction, norm_state, plot_type, file_type, save_width, save_height) {
   
   print(p)
   
-  test_name_short <- c("wilcoxon" = "wlcxn", "art_lmm" = "art-lmm", "rank_lmm" = "rnk-lmm", "ttest" = "t-test")
+  test_name_short <- c("wilcoxon" = "wlcxn", "art_lmm" = "art-lmm", "rank_lmm" = "rnk-lmm", "ttest" = "t-test", "none" = "none", "anova1" = "ANOVA")
   correction_short <- c("bonferroni" = "bonf", "holm" = "holm", "BH" = "BH", "none" = "")
+  plot_type_short <- c("boxplot" = "bxplt", "colplot" = "clplt")
   
   plot_name <- paste0("Run", metadata$run_string, "_", metadata$measure_string_file, "_", 
-                     metadata$condition_code, "_", test_name_short[test_method], "_", correction_short[pairwise_correction], metadata$norm_state, "-bxplt", file_type)
+                     metadata$condition_code, "_", test_name_short[test_method], "_", correction_short[pairwise_correction], metadata$norm_state, "-", plot_type_short[plot_type], file_type)
   
   ggsave(plot_name, plot = p, width = save_width, height = save_height)
   cat("\nPlot saved to:", plot_name, "\n")
@@ -936,19 +1169,8 @@ save_and_display <- function(p, metadata, test_method, pairwise_correction, norm
 }
 ```
 
-```{r min-max-norm}
-NET_Data_Combined <- NET_Data_Combined %>%
-  group_by(Source) %>%
-  mutate(
-    min_val = mean(CitH3.Index[Condition == "- PMA"]),
-    max_val = mean(CitH3.Index[Condition == "+ PMA"]),
-    CitH3.Min.Max.Normalized = (CitH3.Index - min_val) / (max_val - min_val)
-  ) %>%
-  ungroup()
-```
-
 ```{r edits}
-#NET_Data_Combined$Percent.Dead <- NET_Data_Combined$Percent.Dead * 100
+#NET_Data_Combined$Percent.Viability <- 100 - NET_Data_Combined$Percent.Dead
 #NET_Data_Combined$Total.Count <- as.numeric(gsub(",", "", NET_Data_Combined$Total.Count))
 
 #class(NET_Data_Combined$Total.Count)
@@ -956,62 +1178,75 @@ NET_Data_Combined <- NET_Data_Combined %>%
 #NET_Data_Combined$Condition <- gsub("Polyester\nColors\n4 Hours", "Polyester\nColors", NET_Data_Combined$Condition)
 
 #NET_Data_Combined[, Source := "Pooled"]
-
-# =======================
-# In plot 2, right after aesthetics <- setup_plot_aesthetics(...)
-#aesthetics$shape_values["Run 7"] <- 15  # Force Run 7 to use shape 17 (triangle)
-#aesthetics$shape_values["Run 8"] <- 18
-#aesthetics$shape_values["Run 9"] <- 19
-# ========================
 ```  
 
 ```{r MAIN SCRIPT}
 # === USER SETTINGS ===
 runs_to_plot <- c(
-                  "CHO LD"
+                  "Run 6"
                   )
-conditions_to_plot <- c(
-                       "100%\nF12",
-                       "0.1% DMSO\n(0.014M)",
-                       "0.36µM\nDBP",
-                       "70µM\nDBP",
-                       "600µM\nDBP",
-                       "4.2M\nDMSO"
-                        )
-                               # Set to c("") to plot all possible conditions
-measure_to_plot <- c("Percent.Dead")
+conditions_to_plot <- c(""
+                       #"Cells Only",
+                       #"+ PMA",
+                       #"- PMA",
+                       #"H2O Control",
+                       #"Polyester",
+                       #"White Cotton"
+                       #"100%\nF12",
+                       #"0.1% DMSO\n(0.014M)",
+                       #"0.36 µM\nDBP",
+                       #"70 µM\nDBP",
+                       #"600 µM\nDBP",
+                       #"4.2 M\nDMSO"
+                       #"LJ",
+                       #"LJ Air",
+                       #"Miramar"
+                       #"Miramar Air"
+                        )               # Set to c("") to plot all possible conditions
+                               
+measure_to_plot <- c("Total.Count"
+                     #"RFU.10.Mins", "RFU.20.Mins"
+                     )
 
-group_by_source <- FALSE
-normalize <- FALSE                          # Specifically z-score, min-max norm is created as a column "CitH3.Min.Max.Normalized"
-test_method <- "none"                      # Options: "wilcoxon", "ttest", "art_lmm", "rank_lmm", "none"
+group_by_source <- FALSE                    # Separate different "runs" instead of plotting them together
+normalize <- FALSE                          # Specifically z-score, min-max norm is created as a column eg "CitH3.Min.Max.Normalized"
+test_method <- "none"                      # Options: "wilcoxon", "ttest", "art_lmm", "rank_lmm", "anova1", "none"
 pairwise_correction <- "none"               # Options: "bonferroni", "holm", "BH" (Benjamini-Hochberg), "none"
-use_custom_pairs <- TRUE                    # If FALSE everything gets compared to everything, custom pair list below
+use_custom_pairs <- FALSE                    # If FALSE everything gets compared to everything, custom pair list below
 colored_boxes <- FALSE                      # Color fill for boxes
-use_custom_title <- TRUE
-use_axis_break <- TRUE                      # If TRUE, adjust settings below
-background_fill <- TRUE
+use_custom_title <- FALSE
+use_custom_y <- FALSE
+use_axis_break <- FALSE                      # If TRUE, adjust settings below
+background_fill <- FALSE
 panel_border <- TRUE
+plot_type <- "boxplot"                      # Options: "boxplot" or "colplot"
+set_tick_range <- FALSE                      # Manually control y-axis min and tick max and tick spacing
 
 # Save settings
 file_type <- ".png"
-save_width <- 14
-save_height <- 10
+save_width <- 16
+save_height <- 8
 
 # Bracket settings 
-bracket_coefficient <- 0.8                  # Key Bracket Spacing Variable
+bracket_coefficient <- 1.2                  # Key Bracket Spacing Variable
 bracket_settings <- list(
   y_start_mult = 1.15,
-  step_div = 10,
-  height_div = 32,
+         step_div = 10,
+       height_div = 32,
   text_offset_div = 23,
   linewidth = 0.5,
-  text_sizes = c(5, 5, 6)
+  text_sizes = c(4, 4, 5)
 )
 
 # Axis break settings
 break_ranges <- list(c(6, 60)) # List of break ranges: list(c(start1, end1), c(start2, end2))
-break_scale <- 1                # Relative size of broken sections
+break_scale <- 1               # Relative size of broken sections
 break_space <- 1
+
+# Y-axis tick settings
+tick_range_min <- 0
+tick_range_max <- 35
+tick_scale <- 5
 
 # Custom comparison pairs (used if use_custom_pairs = TRUE)
 custom_pairs_list <- list(
@@ -1026,11 +1261,13 @@ custom_pairs_list <- list(
 )
 
 # Plot settings
-custom_title <- "CHO Live/Dead"
+custom_title <- "Internal Calcium Signalling at 0 Minutes"
+custom_y <- "RFU"
 
 dodge_width <- 0.8
 box_width <- 0.6
 box_alpha <- 0.7
+outline_width <- 1.2
 
 title_size <- 25
 axis_x_size <- 20
@@ -1057,6 +1294,7 @@ pattern_key_scale <- 0.6
 
 # Source color mapping
 source_colors <- c(
+  "MPs" = "grey10"
   #"Run 6" = "#E41A1C",
   #"Run 7" = "#377EB8",
   #"Run 8" = "#6A0DAD",
@@ -1106,7 +1344,9 @@ pairwise_results <- switch(test_method,
   "rank_lmm" = calculate_rank_lmm_pvalues(plot_data, condition_pairs, group_by_source, 
                                          pairwise_correction, correction_needed),
   "ttest" = calculate_ttest_pvalues(plot_data, condition_pairs, group_by_source,     
-                                    pairwise_correction, correction_needed),  
+                                    pairwise_correction, correction_needed),
+  "anova1" = calculate_anova1_pvalues(plot_data, condition_pairs, group_by_source,     
+                                    pairwise_correction, correction_needed), 
 )
 
 # Extract results
@@ -1139,7 +1379,7 @@ pattern_settings <- list(
 if (group_by_source) {
   p <- create_base_plot_grouped(plot_data, aesthetics, dodge_width, box_width, 
                                 box_alpha, box_outlier_shape, point_size, point_alpha,
-                                jitter_width_grouped, pattern_settings)
+                                jitter_width_grouped, pattern_settings, outline_width)
   if (run_stats) {
   p <- add_brackets_grouped(p, plot_data, run_comparisons, condition_pairs,
                            conditions_to_plot, aesthetics, dodge_width)
@@ -1160,9 +1400,10 @@ if (group_by_source) {
 p <- finalize_plot(p, metadata, aesthetics, title_size, axis_x_size,
                   axis_y_tick_size, axis_y_title_size, legend_position, legend_size,
                   use_axis_break, break_ranges, break_scale, break_space,
-                  background_fill, panel_border, background_color, border_color)
+                  background_fill, panel_border, background_color, border_color,
+                  set_tick_range, tick_range_min, tick_range_max, tick_scale)
 
-plot_name <- save_and_display(p, metadata, test_method, pairwise_correction, norm_state, file_type, save_width, save_height)
+plot_name <- save_and_display(p, metadata, test_method, pairwise_correction, norm_state, plot_type, file_type, save_width, save_height)
 ```
 ---
 ## **Workflow:**
